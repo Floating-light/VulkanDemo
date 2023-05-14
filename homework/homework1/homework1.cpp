@@ -92,6 +92,20 @@ public:
 	struct Material {
 		glm::vec4 baseColorFactor = glm::vec4(1.0f);
 		uint32_t baseColorTextureIndex;
+		
+		float metallicFactor = 1.f;
+		float roughnessFactor = 1.f;
+		uint32_t metallicRoughnessTextureIndex;
+
+		glm::vec4 emissiveFactor = glm::vec4(1.0f);
+		
+		uint32_t normalTextureIndex;
+
+		uint32_t emissiveTextureIdnex = -1;
+
+		uint32_t occlusionTextureIndex = -1;
+
+		VkDescriptorSet _descriptorSet;
 	};
 
 	// Contains the texture for a single glTF image
@@ -188,8 +202,9 @@ public:
 	{
 		materials.resize(input.materials.size());
 		for (size_t i = 0; i < input.materials.size(); i++) {
-			// We only read the most basic properties required for our sample
+			// We only read the most basic properties required for our samples
 			tinygltf::Material glTFMaterial = input.materials[i];
+			const tinygltf::ParameterMap& parameterValues = glTFMaterial.values;
 			// Get the base color factor
 			if (glTFMaterial.values.find("baseColorFactor") != glTFMaterial.values.end()) {
 				materials[i].baseColorFactor = glm::make_vec4(glTFMaterial.values["baseColorFactor"].ColorFactor().data());
@@ -197,6 +212,41 @@ public:
 			// Get base color texture index
 			if (glTFMaterial.values.find("baseColorTexture") != glTFMaterial.values.end()) {
 				materials[i].baseColorTextureIndex = glTFMaterial.values["baseColorTexture"].TextureIndex();
+			}
+			static const std::string _MRTKey("metallicRoughnessTexture");
+			if (glTFMaterial.values.find(_MRTKey) != glTFMaterial.values.end());
+			if(auto Itr = parameterValues.find(_MRTKey); Itr != parameterValues.end())
+			{
+				materials[i].metallicRoughnessTextureIndex = Itr->second.TextureIndex();
+			}
+			static const std::string _metallicFactorKey("metallicFactor");
+			if(auto Itr = parameterValues.find(_metallicFactorKey); Itr != parameterValues.end())
+			{
+				materials[i].metallicFactor = Itr->second.Factor();
+			}
+			static const std::string _roughnessFactorKey("roughnessFactor");
+			//static constexpr std::string __roughnessFactorKey{ "roughnessFactor" };
+			if (auto Itr = parameterValues.find(_roughnessFactorKey); Itr != parameterValues.end())
+			{
+				materials[i].roughnessFactor = Itr->second.Factor();
+			}
+			assert(glTFMaterial.normalTexture.index != -1);
+			assert(glTFMaterial.normalTexture.texCoord == 0);
+			assert(glTFMaterial.normalTexture.scale == 1);
+			materials[i].normalTextureIndex = glTFMaterial.normalTexture.index;
+
+			materials[i].emissiveFactor = glm::vec4(glm::make_vec3(glTFMaterial.emissiveFactor.data()),0.0f);
+			if (glTFMaterial.emissiveTexture.index != -1)
+			{
+				assert(glTFMaterial.emissiveTexture.texCoord == 0);
+				materials[i].emissiveTextureIdnex = glTFMaterial.emissiveTexture.index;
+			}
+
+			if (glTFMaterial.occlusionTexture.index != -1)
+			{
+				assert(glTFMaterial.occlusionTexture.texCoord == 0);
+				assert(glTFMaterial.occlusionTexture.strength == 1);
+				materials[i].occlusionTextureIndex = glTFMaterial.occlusionTexture.index;
 			}
 		}
 	}
@@ -330,6 +380,26 @@ public:
 		}
 	}
 
+	void setupDescriptorSet(VkDevice device, VkDescriptorPool descriptorPool, VkDescriptorSetLayout descritorSetLayout) 
+	{
+		for (size_t i = 0; i < materials.size(); i++)
+		{
+			Material& mat = materials[i];
+			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descritorSetLayout, 1);
+			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &mat._descriptorSet));
+			std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,0,
+				& (images[mat.baseColorTextureIndex].texture.descriptor)),
+
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
+				&(images[mat.normalTextureIndex].texture.descriptor))
+			};	
+
+			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(),0,NULL);
+		}
+		
+	}
+
 	/*
 		glTF rendering functions
 	*/
@@ -353,7 +423,8 @@ public:
 					// Get the texture index for this primitive
 					VulkanglTFModel::Texture texture = textures[materials[primitive.materialIndex].baseColorTextureIndex];
 					// Bind the descriptor for the current primitive's texture
-					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &images[texture.imageIndex].descriptorSet, 0, nullptr);
+					//vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &images[texture.imageIndex].descriptorSet, 0, nullptr);
+					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &(materials[primitive.materialIndex]._descriptorSet),0,nullptr);
 					vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
 				}
 			}
@@ -597,7 +668,7 @@ public:
 
 	void setupDescriptors()
 	{
-		/*
+		/* 
 			This sample uses separate descriptor sets (and layouts) for the matrices and materials (textures)
 		*/
 
@@ -608,20 +679,35 @@ public:
 		};
 		// One set for matrices and one per model image/texture
 		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size()) + 1;
+		// typedef struct VkDescriptorPoolCreateInfo {
+		//	VkStructureType                sType;
+		//	const void* pNext;
+		//	VkDescriptorPoolCreateFlags    flags;
+		//	uint32_t                       maxSets;
+		//	uint32_t                       poolSizeCount;
+		//	const VkDescriptorPoolSize* pPoolSizes;
+		//} VkDescriptorPoolCreateInfo;
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, maxSetCount);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
-		// Descriptor set layout for passing matrices
+		// Descriptor set layout for passing matrices, 绑定是指绑定到Shader中的位置 -- > 第0个UBO
 		VkDescriptorSetLayoutBinding setLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
 		VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCI = vks::initializers::descriptorSetLayoutCreateInfo(&setLayoutBinding, 1);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.matrices));
-		// Descriptor set layout for passing material textures
-		setLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0);
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.textures));
+		
+		// Descriptor set layout for passing material textures, 绑定到第0 个位置，Texture和Sampler, 用于PixelShader
+		std::array<VkDescriptorSetLayoutBinding, 2> materialTexturesLayout = {
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1)
+		};
+		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), 2);
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.textures));
+		
 		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material)
 		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.textures };
 		VkPipelineLayoutCreateInfo pipelineLayoutCI= vks::initializers::pipelineLayoutCreateInfo(setLayouts.data(), static_cast<uint32_t>(setLayouts.size()));
 		// We will use push constants to push the local matrices of a primitive to the vertex shader
+		// PushConstant是向Shader中传递常量, 一种uniform，但是不用创建Buffer，直接向管线写入这个值。在Shader侧，要定义个结构体接收它
 		VkPushConstantRange pushConstantRange = vks::initializers::pushConstantRange(VK_SHADER_STAGE_VERTEX_BIT, sizeof(glm::mat4), 0);
 		// Push constant ranges are part of the pipeline layout
 		pipelineLayoutCI.pushConstantRangeCount = 1;
@@ -629,17 +715,22 @@ public:
 		VK_CHECK_RESULT(vkCreatePipelineLayout(device, &pipelineLayoutCI, nullptr, &pipelineLayout));
 
 		// Descriptor set for scene matrices
+		// VkDescriptorSetLayout只是定义这个DescritporSet的绑定和格式，这里要创建真正的DescritporSet
 		VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.matrices, 1);
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
 		VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &shaderData.buffer.descriptor);
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 		// Descriptor sets for materials
-		for (auto& image : glTFModel.images) {
-			const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textures, 1);
-			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &image.descriptorSet));
-			VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(image.descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, &image.texture.descriptor);
-			vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
-		}
+		//for (auto& image : glTFModel.images) {
+		//	const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textures, 1);
+		//	VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &image.descriptorSet)); // 为当前Texture创建它的DescritorSet
+		//	// 将当前Iamge信息写入到DescritporSet
+		//	VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(image.descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, &image.texture.descriptor);
+		//	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
+		//}
+		glTFModel.setupDescriptorSet(device, descriptorPool, descriptorSetLayouts.textures);
+
+
 	}
 
 	void preparePipelines()
@@ -672,7 +763,8 @@ public:
 		const std::array<VkPipelineShaderStageCreateInfo, 2> shaderStages = {
 			loadShader(getHomeworkShadersPath() + "homework1/mesh.vert.spv", VK_SHADER_STAGE_VERTEX_BIT),
 			loadShader(getHomeworkShadersPath() + "homework1/mesh.frag.spv", VK_SHADER_STAGE_FRAGMENT_BIT)
-		};
+		}; 
+		       
 
 		VkGraphicsPipelineCreateInfo pipelineCI = vks::initializers::pipelineCreateInfo(pipelineLayout, renderPass, 0);
 		pipelineCI.pVertexInputState = &vertexInputStateCI;
@@ -685,6 +777,7 @@ public:
 		pipelineCI.pDynamicState = &dynamicStateCI;
 		pipelineCI.stageCount = static_cast<uint32_t>(shaderStages.size());
 		pipelineCI.pStages = shaderStages.data();
+
 
 		// Solid rendering pipeline
 		VK_CHECK_RESULT(vkCreateGraphicsPipelines(device, pipelineCache, 1, &pipelineCI, nullptr, &pipelines.solid));
@@ -755,4 +848,26 @@ public:
 	}
 };
 
-VULKAN_EXAMPLE_MAIN()
+VulkanExample* vulkanExample;
+LRESULT __stdcall WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
+{
+	if (vulkanExample != 0)
+	{
+		vulkanExample->handleMessages(hWnd, uMsg, wParam, lParam);
+	}
+	return (DefWindowProcA(hWnd, uMsg, wParam, lParam));
+}
+int __stdcall WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int)
+{
+	for (int32_t i = 0; i < (*__p___argc()); i++)
+	{
+		VulkanExample::args.push_back((*__p___argv())[i]);
+	};
+	vulkanExample = new VulkanExample();
+	vulkanExample->initVulkan();
+	vulkanExample->setupWindow(hInstance, WndProc);
+	vulkanExample->prepare();
+	vulkanExample->renderLoop();
+	delete (vulkanExample);
+	return 0;
+}

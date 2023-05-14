@@ -1,3 +1,42 @@
+
+function(ComplieShader HOMEWORK_NAME)
+	set(SHADER_DIR_HLSL "../data/homework/shaders/hlsl/${HOMEWORK_NAME}")
+	file(GLOB SHADERS_HLSL_VERT "${SHADER_DIR_HLSL}/*.vert")
+	file(GLOB SHADERS_HLSL_FRAG "${SHADER_DIR_HLSL}/*.frag")
+	set(SHADER_RESULT "")
+	foreach(VSHADER ${SHADERS_HLSL_VERT})
+		set(OUT_SHADER "${VSHADER}.spv")
+		add_custom_command(
+			OUTPUT ${OUT_SHADER}
+			PRE_BUILD
+			COMMAND echo "=====>> ${VSHADER}"
+			COMMAND C:/VulkanSDK/1.3.246.1/Bin/dxc.exe -spirv -T vs_6_0 -E main ${VSHADER} -Fo ${OUT_SHADER}
+			DEPENDS ${VSHADER}
+			VERBATIM
+		)
+		list(APPEND SHADER_RESULT ${OUT_SHADER})
+	endforeach()
+
+	foreach(FSHADER ${SHADERS_HLSL_FRAG})
+		set(OUT_SHADERF "${FSHADER}.spv")
+		add_custom_command(
+			OUTPUT ${OUT_SHADERF}
+			PRE_BUILD
+			COMMAND echo "=====>> ${FSHADER}"
+			COMMAND C:/VulkanSDK/1.3.246.1/Bin/dxc.exe -spirv -T ps_6_0 -E main ${FSHADER} -Fo ${OUT_SHADERF}
+			DEPENDS ${FSHADER}
+			VERBATIM
+		)
+		list(APPEND SHADER_RESULT ${OUT_SHADERF})
+	endforeach()
+
+	add_custom_target(
+		"${HOMEWORK_NAME}_shader" 
+		DEPENDS ${SHADER_RESULT})
+	add_dependencies(${HOMEWORK_NAME} "${HOMEWORK_NAME}_shader")
+
+endfunction(ComplieShader)
+
 # Function for building single homework
 function(buildHomework HOMEWORK_NAME)
 	SET(HOMEWORK_FOLDER ${CMAKE_CURRENT_SOURCE_DIR}/${HOMEWORK_NAME})
@@ -36,6 +75,7 @@ function(buildHomework HOMEWORK_NAME)
 		add_executable(${HOMEWORK_NAME} ${MAIN_CPP} ${SOURCE} ${MAIN_HEADER} ${SHADERS_GLSL} ${SHADERS_HLSL} ${README_FILES})
 		target_link_libraries(${HOMEWORK_NAME} base )
 	endif(WIN32)
+	ComplieShader(${HOMEWORK_NAME})
 
 	set_target_properties(${HOMEWORK_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 	if(${HOMEWORK_NAME} STREQUAL "texture3d")

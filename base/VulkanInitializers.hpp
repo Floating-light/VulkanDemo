@@ -253,10 +253,10 @@ namespace vks
 			uint32_t descriptorCount = 1)
 		{
 			VkDescriptorSetLayoutBinding setLayoutBinding {};
-			setLayoutBinding.descriptorType = type;
-			setLayoutBinding.stageFlags = stageFlags;
-			setLayoutBinding.binding = binding;
-			setLayoutBinding.descriptorCount = descriptorCount;
+			setLayoutBinding.descriptorType = type; // VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER 对应的Buffer类型
+			setLayoutBinding.stageFlags = stageFlags; // 在Shader中要使用的阶段
+			setLayoutBinding.binding = binding; // 绑定到Shader中的槽位
+			setLayoutBinding.descriptorCount = descriptorCount; // 这样的Buffer有几个
 			return setLayoutBinding;
 		}
 
