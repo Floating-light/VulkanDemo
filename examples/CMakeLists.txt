@@ -1,3 +1,32 @@
+
+function(buildShaderFile SHADER_FILE)
+	set(DXC_PATH "$ENV{VK_SDK_PATH}/Bin/dxc.exe")
+	if(${SHADER_FILE} MATCHES "frag$")
+		set(SHADER_TYPE "ps_6_5")
+	endif()
+	if(${SHADER_FILE} MATCHES "vert$")
+		set(SHADER_TYPE "vs_6_5")
+	endif()
+	add_custom_command(
+		OUTPUT "${SHADER_FILE}.spv"
+		PRE_BUILD
+		COMMAND echo "=====>> ${SHADER_FILE}"
+		COMMAND ${DXC_PATH} -spirv -T ${SHADER_TYPE} -E main ${SHADER_FILE} -Fo "${SHADER_FILE}.spv"
+		DEPENDS ${SHADER_FILE}
+		VERBATIM
+	)
+endfunction(buildShaderFile)
+
+set(EXAMPLE_HLSL_SHADER_DIR "../data/shaders/hlsl")
+set(EXAMPLE_HLSL_SHADER_OUTPUT "")
+file(GLOB_RECURSE ALL_SHADERS_HLSL "${EXAMPLE_HLSL_SHADER_DIR}/*.vert" "${EXAMPLE_HLSL_SHADER_DIR}/*.frag")
+foreach(CUR_HLSL_FILE ${ALL_SHADERS_HLSL})
+	buildShaderFile(${CUR_HLSL_FILE})
+	list(APPEND EXAMPLE_HLSL_SHADER_OUTPUT "${CUR_HLSL_FILE}.spv")
+endforeach(CUR_HLSL_FILE)
+
+add_custom_target(all_example_shader ALL DEPENDS ${EXAMPLE_HLSL_SHADER_OUTPUT})
+
 # Function for building single example
 function(buildExample EXAMPLE_NAME)
 	SET(EXAMPLE_FOLDER ${CMAKE_CURRENT_SOURCE_DIR}/${EXAMPLE_NAME})
@@ -37,6 +66,7 @@ function(buildExample EXAMPLE_NAME)
 		target_link_libraries(${EXAMPLE_NAME} base )
 	endif(WIN32)
 
+	add_dependencies(${EXAMPLE_NAME} all_example_shader)# dependenc for shader project, this will cause compile sahder project when build the example
 	set_target_properties(${EXAMPLE_NAME} PROPERTIES FOLDER "Example")
 	set_target_properties(${EXAMPLE_NAME} PROPERTIES VS_DEBUGGER_WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/bin)
 	if(${EXAMPLE_NAME} STREQUAL "texture3d")

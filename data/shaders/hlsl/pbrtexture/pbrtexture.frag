@@ -179,6 +179,5 @@ float4 main(VSOutput input) : SV_TARGET
 	color = color * (1.0f / Uncharted2Tonemap((11.2f).xxx));
 	// Gamma correction
 	color = pow(color, (1.0f / uboParams.gamma).xxx);
-
-	return float4(color, 1.0);
+    return float4(color, 1.0);
 }
