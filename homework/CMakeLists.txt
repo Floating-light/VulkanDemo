@@ -4,13 +4,14 @@ function(ComplieShader HOMEWORK_NAME)
 	file(GLOB SHADERS_HLSL_VERT "${SHADER_DIR_HLSL}/*.vert")
 	file(GLOB SHADERS_HLSL_FRAG "${SHADER_DIR_HLSL}/*.frag")
 	set(SHADER_RESULT "")
+	set(DXC_PATH "$ENV{VK_SDK_PATH}/Bin/dxc.exe")
 	foreach(VSHADER ${SHADERS_HLSL_VERT})
 		set(OUT_SHADER "${VSHADER}.spv")
 		add_custom_command(
 			OUTPUT ${OUT_SHADER}
 			PRE_BUILD
 			COMMAND echo "=====>> ${VSHADER}"
-			COMMAND C:/VulkanSDK/1.3.246.1/Bin/dxc.exe -spirv -T vs_6_0 -E main ${VSHADER} -Fo ${OUT_SHADER}
+			COMMAND ${DXC_PATH} -spirv -T vs_6_0 -E main ${VSHADER} -Fo ${OUT_SHADER}
 			DEPENDS ${VSHADER}
 			VERBATIM
 		)
@@ -23,7 +24,7 @@ function(ComplieShader HOMEWORK_NAME)
 			OUTPUT ${OUT_SHADERF}
 			PRE_BUILD
 			COMMAND echo "=====>> ${FSHADER}"
-			COMMAND C:/VulkanSDK/1.3.246.1/Bin/dxc.exe -spirv -T ps_6_0 -E main ${FSHADER} -Fo ${OUT_SHADERF}
+			COMMAND ${DXC_PATH} -spirv -T ps_6_0 -E main ${FSHADER} -Fo ${OUT_SHADERF}
 			DEPENDS ${FSHADER}
 			VERBATIM
 		)
