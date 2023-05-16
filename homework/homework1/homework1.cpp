@@ -448,9 +448,9 @@ public:
 				images[0].texture.descriptor,
 			};
 			std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
-				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,0,imageDescriptor.data(), imageDescriptor.size()),
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0,&mat.CBO.descriptor, 1 ),
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,imageDescriptor.data(), imageDescriptor.size())
 
-				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,&mat.CBO.descriptor, 1 )
 			};	
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(),0,NULL);
@@ -751,9 +751,10 @@ public:
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.matrices));
 		
 		// Descriptor set layout for passing material textures, 绑定到第0 个位置，Texture和Sampler, 用于PixelShader
+		// space 1 
 		std::array<VkDescriptorSetLayoutBinding, 2> materialTexturesLayout = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 6), // 材质中可能用到的最多纹理数量
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_FRAGMENT_BIT, 1,1)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_FRAGMENT_BIT,0 ,1),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, 6) // 材质中可能用到的最多纹理数量
 		};
 		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), materialTexturesLayout.size());
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.textures));
