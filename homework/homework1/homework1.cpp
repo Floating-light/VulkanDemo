@@ -39,11 +39,16 @@ public:
 	VkQueue copyQueue;
 
 	// The vertex layout for the samples' model
+	// 1. 加载Model时构建，并构建VertexBuffer和IndexBuffer
+	// 2. 构建GraphicsPipelines时需要明确顶点数据的布局
+	// 这确定了逐顶点的输入
+	// pipelineLayout 确定的是Shader的全局输入.
 	struct Vertex {
 		glm::vec3 pos;
 		glm::vec3 normal;
 		glm::vec2 uv;
 		glm::vec3 color;
+		glm::vec3 tangent;
 	};
 
 	// Single vertex buffer for all primitives
@@ -307,6 +312,7 @@ public:
 					const float* positionBuffer = nullptr;
 					const float* normalsBuffer = nullptr;
 					const float* texCoordsBuffer = nullptr;
+					const float* tangentBuffer = nullptr;
 					size_t vertexCount = 0;
 
 					// Get buffer data for vertex positions
@@ -329,7 +335,13 @@ public:
 						const tinygltf::BufferView& view = input.bufferViews[accessor.bufferView];
 						texCoordsBuffer = reinterpret_cast<const float*>(&(input.buffers[view.buffer].data[accessor.byteOffset + view.byteOffset]));
 					}
-
+					static const std::string tangentKey("TANGENT");
+					if (auto Itr = glTFPrimitive.attributes.find(tangentKey); Itr != glTFPrimitive.attributes.end())
+					{
+						const tinygltf::Accessor& accessor = input.accessors[Itr->second];
+						const tinygltf::BufferView& view = input.bufferViews[accessor.bufferView];
+						tangentBuffer = reinterpret_cast<const float*> (&(input.buffers[view.buffer].data[accessor.byteOffset + view.byteOffset]));
+					}
 					// Append data to model's vertex buffer
 					for (size_t v = 0; v < vertexCount; v++) {
 						Vertex vert{};
@@ -337,6 +349,7 @@ public:
 						vert.normal = glm::normalize(glm::vec3(normalsBuffer ? glm::make_vec3(&normalsBuffer[v * 3]) : glm::vec3(0.0f)));
 						vert.uv = texCoordsBuffer ? glm::make_vec2(&texCoordsBuffer[v * 2]) : glm::vec3(0.0f);
 						vert.color = glm::vec3(1.0f);
+						vert.tangent = glm::normalize(glm::vec3(tangentBuffer ? glm::make_vec3(&tangentBuffer[v * 3]) : glm::vec3(0.0f)));
 						vertexBuffer.push_back(vert);
 					}
 				}
@@ -809,6 +822,7 @@ public:
 			vks::initializers::vertexInputAttributeDescription(0, 1, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VulkanglTFModel::Vertex, normal)),// Location 1: Normal
 			vks::initializers::vertexInputAttributeDescription(0, 2, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VulkanglTFModel::Vertex, uv)),	// Location 2: Texture coordinates
 			vks::initializers::vertexInputAttributeDescription(0, 3, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VulkanglTFModel::Vertex, color)),	// Location 3: Color
+			vks::initializers::vertexInputAttributeDescription(0, 4, VK_FORMAT_R32G32B32_SFLOAT, offsetof(VulkanglTFModel::Vertex, tangent)),	// Location 3: Color
 		};
 		VkPipelineVertexInputStateCreateInfo vertexInputStateCI = vks::initializers::pipelineVertexInputStateCreateInfo();
 		vertexInputStateCI.vertexBindingDescriptionCount = static_cast<uint32_t>(vertexInputBindings.size());
