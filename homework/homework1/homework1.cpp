@@ -27,7 +27,7 @@
 
 #include "vulkanexamplebase.h"
 
-#define ENABLE_VALIDATION false
+#define ENABLE_VALIDATION true
 
 // Contains everything required to render a glTF model in Vulkan
 // This class is heavily simplified (compared to glTF's feature set) but retains the basic glTF structure
@@ -88,6 +88,15 @@ public:
 		}
 	};
 
+	struct MaterialCBO
+	{
+		// 材质中需要从一个TextureArray中索引出对应的Texture
+		int32_t baseColorTextureIndex = -1;
+		int32_t normalTextureIndex = -1;
+		int32_t metallicRoughnessTextureIndex = -1;
+		int32_t emissiveTextureIndex = -1;
+		int32_t occlusionTextureIndex = -1;
+	};
 	// A glTF material stores information in e.g. the texture that is attached to it and colors
 	struct Material {
 		glm::vec4 baseColorFactor = glm::vec4(1.0f);
@@ -101,9 +110,12 @@ public:
 		
 		uint32_t normalTextureIndex;
 
-		uint32_t emissiveTextureIdnex = -1;
+		int32_t emissiveTextureIdnex = -1;
 
-		uint32_t occlusionTextureIndex = -1;
+		int32_t occlusionTextureIndex = -1;
+
+		// GPU
+		vks::Buffer CBO;
 
 		VkDescriptorSet _descriptorSet;
 	};
@@ -380,19 +392,65 @@ public:
 		}
 	}
 
-	void setupDescriptorSet(VkDevice device, VkDescriptorPool descriptorPool, VkDescriptorSetLayout descritorSetLayout) 
+	// @param descriptorSetLayout 是材质需要的参数的Layout
+	void setupDescriptorSet(vks::VulkanDevice* inDevice, VkDescriptorPool descriptorPool, VkDescriptorSetLayout descritorSetLayout) 
 	{
+		VkDevice device = inDevice->logicalDevice;
 		for (size_t i = 0; i < materials.size(); i++)
 		{
-			Material& mat = materials[i];
+			Material& mat = materials[i]; 
+
+			// Create constant buffer for constant material parameters 
+			// TODO: Move to material 
+			{
+				mat.CBO.device = device;
+				VkBufferUsageFlags usageFlags = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT;
+				VkMemoryPropertyFlags memoryFlags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+				// Create buffer VkBuffer
+				VkBufferCreateInfo bufferCreateInfo = vks::initializers::bufferCreateInfo(usageFlags, sizeof(MaterialCBO));
+				VK_CHECK_RESULT(vkCreateBuffer(device, &bufferCreateInfo, nullptr, &mat.CBO.buffer));
+
+				// 创建memory，保存这个BufferHadnle将要承载的数据
+				VkMemoryRequirements memReqs;
+				VkMemoryAllocateInfo memAlloc = vks::initializers::memoryAllocateInfo();
+				vkGetBufferMemoryRequirements(device, mat.CBO.buffer, &memReqs);
+				memAlloc.allocationSize = memReqs.size;
+				memAlloc.memoryTypeIndex = inDevice->getMemoryType(memReqs.memoryTypeBits, memoryFlags);
+
+				vkAllocateMemory(device, &memAlloc, nullptr, &mat.CBO.memory);
+
+				mat.CBO.alignment = memReqs.alignment;
+				mat.CBO.size= sizeof(MaterialCBO);
+				mat.CBO.usageFlags = usageFlags;
+				mat.CBO.memoryPropertyFlags = memoryFlags;
+
+				MaterialCBO data = {0,1,2,-1,-1};
+				data.emissiveTextureIndex = mat.emissiveTextureIdnex != -1 ? 3 : -1;
+				data.occlusionTextureIndex = mat.occlusionTextureIndex != -1 ? 4 : -1;
+
+				VK_CHECK_RESULT(mat.CBO.map());
+				memcpy(mat.CBO.mapped, &data, sizeof(MaterialCBO));
+				//mat.CBO.flush(); // not need , we are HOST_COHERENT
+				mat.CBO.unmap();
+
+				mat.CBO.setupDescriptor();
+				mat.CBO.bind();
+			}
 			VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descritorSetLayout, 1);
 			VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &mat._descriptorSet));
-			std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
-				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,0,
-				& (images[mat.baseColorTextureIndex].texture.descriptor)),
 
-				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1,
-				&(images[mat.normalTextureIndex].texture.descriptor))
+			std::array< VkDescriptorImageInfo, 6> imageDescriptor = {
+				images[mat.baseColorTextureIndex].texture.descriptor,
+				images[mat.normalTextureIndex].texture.descriptor,
+				images[mat.metallicRoughnessTextureIndex].texture.descriptor,
+				images[std::clamp(mat.emissiveTextureIdnex, 0, 5)].texture.descriptor,
+				images[std::clamp(mat.occlusionTextureIndex, 0, 5)].texture.descriptor,
+				images[0].texture.descriptor,
+			};
+			std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,0,imageDescriptor.data(), imageDescriptor.size()),
+
+				vks::initializers::writeDescriptorSet(mat._descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1,&mat.CBO.descriptor, 1 )
 			};	
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(),0,NULL);
@@ -420,9 +478,6 @@ public:
 			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &nodeMatrix);
 			for (VulkanglTFModel::Primitive& primitive : node->mesh.primitives) {
 				if (primitive.indexCount > 0) {
-					// Get the texture index for this primitive
-					VulkanglTFModel::Texture texture = textures[materials[primitive.materialIndex].baseColorTextureIndex];
-					// Bind the descriptor for the current primitive's texture
 					//vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &images[texture.imageIndex].descriptorSet, 0, nullptr);
 					vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &(materials[primitive.materialIndex]._descriptorSet),0,nullptr);
 					vkCmdDrawIndexed(commandBuffer, primitive.indexCount, 1, primitive.firstIndex, 0, 0);
@@ -673,12 +728,12 @@ public:
 		*/
 
 		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1),
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + glTFModel.images.size()),
 			// One combined image sampler per model image/texture
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(glTFModel.images.size())),
 		};
 		// One set for matrices and one per model image/texture
-		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size()) + 1;
+		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size() * 2) + 1;
 		// typedef struct VkDescriptorPoolCreateInfo {
 		//	VkStructureType                sType;
 		//	const void* pNext;
@@ -697,10 +752,10 @@ public:
 		
 		// Descriptor set layout for passing material textures, 绑定到第0 个位置，Texture和Sampler, 用于PixelShader
 		std::array<VkDescriptorSetLayoutBinding, 2> materialTexturesLayout = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0),
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1)
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 0, 6), // 材质中可能用到的最多纹理数量
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_FRAGMENT_BIT, 1,1)
 		};
-		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), 2);
+		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), materialTexturesLayout.size());
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.textures));
 		
 		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material)
@@ -728,7 +783,7 @@ public:
 		//	VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(image.descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, &image.texture.descriptor);
 		//	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 		//}
-		glTFModel.setupDescriptorSet(device, descriptorPool, descriptorSetLayouts.textures);
+		glTFModel.setupDescriptorSet(vulkanDevice, descriptorPool, descriptorSetLayouts.textures);
 
 
 	}
