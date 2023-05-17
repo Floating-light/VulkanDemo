@@ -60,13 +60,20 @@ float getTextureRoughness(VSOutput input)
     return textureColorMap[materialCBO.metallicRoughnessTextureIndex].Sample(samplerColorMap[materialCBO.metallicRoughnessTextureIndex], input.UV).g;
 }
 
-float getTextureOcclusionTexture(VSOutput input)
+float3 getTextureOcclusionTexture(VSOutput input)
 {
     // The occlusion texture. The occlusion values are linearly sampled from the R channel. 
     // Higher values indicate areas that receive full indirect lighting and lower values 
     // indicate no indirect lighting. If other channels are present (GBA), they **MUST** 
     // be ignored for occlusion calculations. When undefined, the material does not have an occlusion texture.
-    return textureColorMap[materialCBO.occlusionTextureIndex].Sample(samplerColorMap[materialCBO.occlusionTextureIndex], input.UV).r;
+    if(materialCBO.occlusionTextureIndex > 0)
+    {
+        return textureColorMap[materialCBO.occlusionTextureIndex].Sample(samplerColorMap[materialCBO.occlusionTextureIndex], input.UV).rrr;
+    }
+    else
+    {
+        return float3(1.0, 1.0, 1.0);
+    }
 }
 
 float3 getTextureEmissive(VSOutput input)
@@ -75,7 +82,14 @@ float3 getTextureEmissive(VSOutput input)
     // by the material. This texture contains RGB components encoded with the sRGB transfer 
     // function. If a fourth component (A) is present, it **MUST** be ignored. When undefined, 
     // the texture **MUST** be sampled as having `1.0` in RGB components.
-    return textureColorMap[materialCBO.emissiveTextureIndex].Sample(samplerColorMap[materialCBO.emissiveTextureIndex], input.UV).rgb;
+    if(materialCBO.emissiveTextureIndex != -1 )
+    {
+        return textureColorMap[materialCBO.emissiveTextureIndex].Sample(samplerColorMap[materialCBO.emissiveTextureIndex], input.UV).rgb;
+    }
+    else
+    {
+        return float3(1.0f, 1.0f, 1.0f);
+    }
 }
 
 float3 calculateNormal(VSOutput input)
@@ -93,7 +107,7 @@ float3 calculateNormal(VSOutput input)
     float3x3 TBN = transpose(float3x3(T, B, N));
     return normalize(mul(TBN, tangentNormal));
 }
-float calculateAlbedoForF0(VSOutput input)
+float3 calculateAlbedoForF0(VSOutput input)
 {
     // What ?
     return pow(getTextureColor(input).rgb, float3(2.2, 2.2, 2.2));
@@ -114,6 +128,17 @@ float3 specularContribution(float2 inUV, float3 L, float3 V, float3 N, float3 F0
     // 光源方向与法线夹角小于90°
     if(dotNL > 0.0)
     {
+        // D = Normal distribution (Distribution of the microfacets)
+        //float D = D_GGX(dotNH, roughness);
+        
+        //// G = Geometric shadowing term (Microfacets shadowing)
+        //float G = G_SchlicksmithGGX(dotNL, dotNV, roughness);
+        
+        //// F = Fresnel factor (reflectance depending on angle of incidence)
+        //float3 F = F_Schlick(dotNV, F0);
+        
+        
+
     }
     
     
@@ -121,7 +146,7 @@ float3 specularContribution(float2 inUV, float3 L, float3 V, float3 N, float3 F0
 }
 float4 main(VSOutput input) : SV_TARGET
 {
-    float4 color = getTextureColor(input) * float4(input.Color, 1.0);
+    //float4 color = getTextureColor(input) * float4(input.Color, 1.0);
 
 	//float3 N = normalize(input.Normal);
     float3 N = calculateNormal(input);
@@ -136,14 +161,17 @@ float4 main(VSOutput input) : SV_TARGET
     float3 F0 = float3(0.04, 0.04, 0.04);
     F0 = lerp(F0, calculateAlbedoForF0(input), metallic);
     
-    float Lo = specularContribution(input.UV, L, V, N, F0, metallic, roughness);
+    float3 Lo = specularContribution(input.UV, L, V, N, F0, metallic, roughness);
     
-	float3 diffuse = max(dot(N, L), 0.0) * input.Color;
+    float3 diffuse = calculateAlbedoForF0(input);
+    
 	float3 specular = pow(max(dot(R, V), 0.0), 16.0) * float3(0.75, 0.75, 0.75);
-    //return float4(diffuse * color.rgb + specular, 1.0);
 
-    //return float4(input.Normal, 1.0f);
-    //return textureNormal.Sample(samplerNormal, input.UV);
-    return float4(N, 1.0f);
-    //return color + L0;
+    float3 ambient = diffuse * getTextureOcclusionTexture(input);
+    float3 color = ambient + Lo;
+    
+    float mat = getTextureEmissive(input);
+
+    //return getTextureColor(input);
+    return float4(diffuse * getTextureOcclusionTexture(input), 1.0f);
 }
