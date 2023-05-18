@@ -19,6 +19,8 @@ SamplerState samplerColorMap[6] : register(s1, space1);
 //Texture2D textureNormal : register(t1, space1);
 //SamplerState samplerNormal : register(s1, space1);
 
+#define PI 3.1415926535
+
 struct PushConsts {
 	float4x4 model;
 };
@@ -34,9 +36,9 @@ struct VSOutput
 [[vk::location(5)]] float3 Tangent : TEXCOORD3;
 };
 
-float4 getTextureColor(VSOutput input)
+float4 getTextureColor(float2 UV)
 {
-    return textureColorMap[materialCBO.baseColorTextureIndex].Sample(samplerColorMap[materialCBO.baseColorTextureIndex], input.UV);
+    return textureColorMap[materialCBO.baseColorTextureIndex].Sample(samplerColorMap[materialCBO.baseColorTextureIndex], UV);
 }
 float3 getTextureNormal(VSOutput input)
 {
@@ -107,12 +109,30 @@ float3 calculateNormal(VSOutput input)
     float3x3 TBN = transpose(float3x3(T, B, N));
     return normalize(mul(TBN, tangentNormal));
 }
-float3 calculateAlbedoForF0(VSOutput input)
+float3 calculateAlbedoForF0(float2 UV)
 {
     // What ?
-    return pow(getTextureColor(input).rgb, float3(2.2, 2.2, 2.2));
+    return pow(getTextureColor(UV).rgb, float3(2.2, 2.2, 2.2));
 }
-
+float D_GGX(float dotNH, float roughness)
+{
+    float alpha = roughness * roughness;
+    float alpha2 = alpha * alpha;
+    float denom = dotNH * dotNH * (alpha2 - 1.0) + 1.0;
+    return alpha2 / (PI * denom * denom);
+}
+float G_SchlicksmithGGX(float dotNL, float dotNV, float roughness)
+{
+    float r = roughness + 1.0;
+    float k = (r * r) / 8.0;
+    float GL = dotNL / (dotNL * (1.0f - k) + k);
+    float GV = dotNV / (dotNV * (1.0f - k) + k);
+    return GL * GV;
+}
+float F_Schlick(float dotNV, float3 F0)
+{
+    return F0 + (1.0 - F0) * pow(1.0 - dotNV, 5.0);
+}
 float3 specularContribution(float2 inUV, float3 L, float3 V, float3 N, float3 F0, float metallic, float roughness)
 {
     // Half vector 
@@ -129,19 +149,19 @@ float3 specularContribution(float2 inUV, float3 L, float3 V, float3 N, float3 F0
     if(dotNL > 0.0)
     {
         // D = Normal distribution (Distribution of the microfacets)
-        //float D = D_GGX(dotNH, roughness);
+        float D = D_GGX(dotNH, roughness);
         
-        //// G = Geometric shadowing term (Microfacets shadowing)
-        //float G = G_SchlicksmithGGX(dotNL, dotNV, roughness);
+        // G = Geometric shadowing term (Microfacets shadowing)
+        float G = G_SchlicksmithGGX(dotNL, dotNV, roughness);
         
-        //// F = Fresnel factor (reflectance depending on angle of incidence)
-        //float3 F = F_Schlick(dotNV, F0);
+        // F = Fresnel factor (reflectance depending on angle of incidence)
+        float3 F = F_Schlick(dotNV, F0);
         
+        float3 spec = D * F * G / (4 * dotNL * dotNV + 0.001);
         
-
+        float3 kD = (float3(1.0, 1.0, 1.0) - F) * (1.0 - metallic);
+        retColor += (kD * calculateAlbedoForF0(inUV) / PI + spec) * dotNL;
     }
-    
-    
     return retColor;
 }
 float4 main(VSOutput input) : SV_TARGET
@@ -159,19 +179,19 @@ float4 main(VSOutput input) : SV_TARGET
     float roughness = getTextureRoughness(input);
     
     float3 F0 = float3(0.04, 0.04, 0.04);
-    F0 = lerp(F0, calculateAlbedoForF0(input), metallic);
+    F0 = lerp(F0, calculateAlbedoForF0(input.UV), metallic);
     
     float3 Lo = specularContribution(input.UV, L, V, N, F0, metallic, roughness);
     
-    float3 diffuse = calculateAlbedoForF0(input);
+    float3 diffuse = calculateAlbedoForF0(input.UV);
     
 	float3 specular = pow(max(dot(R, V), 0.0), 16.0) * float3(0.75, 0.75, 0.75);
 
     float3 ambient = diffuse * getTextureOcclusionTexture(input);
-    float3 color = ambient + Lo;
+    float emmissive = getTextureEmissive(input);
+    float3 color = (ambient + Lo);
     
-    float mat = getTextureEmissive(input);
 
     //return getTextureColor(input);
-    return float4(diffuse * getTextureOcclusionTexture(input), 1.0f);
+    return float4(color, 1.0f);
 }

@@ -148,7 +148,9 @@ float4 main(VSOutput input) : SV_TARGET
 
 	float3 F0 = float3(0.04, 0.04, 0.04);
 	F0 = lerp(F0, ALBEDO(input.UV), metallic);
-
+	// F0 是0度角入射的菲涅尔反射值，非金属0.02 ~ 0.04, 金属 0.7 ~ 1.0
+	// https://zhuanlan.zhihu.com/p/394419452
+	
 	float3 Lo = float3(0.0, 0.0, 0.0);
 	for(int i = 0; i < 4; i++) {
 		float3 L = normalize(uboParams.lights[i].xyz - input.WorldPos);
