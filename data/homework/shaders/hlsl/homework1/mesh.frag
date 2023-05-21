@@ -111,7 +111,7 @@ float3 calculateNormal(VSOutput input)
 }
 float3 calculateAlbedoForF0(float2 UV)
 {
-    // What ?
+    // What ?https://zhuanlan.zhihu.com/p/400465760
     return pow(getTextureColor(UV).rgb, float3(2.2, 2.2, 2.2));
 }
 float D_GGX(float dotNH, float roughness)
@@ -188,10 +188,14 @@ float4 main(VSOutput input) : SV_TARGET
 	float3 specular = pow(max(dot(R, V), 0.0), 16.0) * float3(0.75, 0.75, 0.75);
 
     float3 ambient = diffuse * getTextureOcclusionTexture(input);
-    float emmissive = getTextureEmissive(input);
+    //float emmissive = getTextureEmissive(input);
     float3 color = (ambient + Lo);
+    //float3 color = getTextureOcclusionTexture(input);
+    //float3 color = float3(roughness, roughness, roughness);
     
 
     //return getTextureColor(input);
+    
+    color = pow(color, (1.0f / 2.2f).xxx);
     return float4(color, 1.0f);
 }
