@@ -235,3 +235,5 @@ data/README_asset_pack.md
 data/font*.*
 data/roboto*.*
 data/Robot-Medium-license.txt
+
+*.spv
