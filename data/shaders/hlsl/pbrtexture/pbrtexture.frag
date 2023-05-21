@@ -159,11 +159,11 @@ float4 main(VSOutput input) : SV_TARGET
 
 	// Games202 lecture 5，6
 	// https://zhuanlan.zhihu.com/p/53086060 六
-	// IBL 环境光fr(BRDF)项，化简积分后得到仅与计算BRDF中的Fresnel项的R0和cosθv 相关的式子
+	// IBL 环境光fr(specular BRDF)项，化简积分后得到仅与计算BRDF中的Fresnel项的R0和cosθv 相关的式子
 	float2 brdf = textureBRDFLUT.Sample(samplerBRDFLUT, float2(max(dot(N, V), 0.0), roughness)).rg;
 	// Li, 可以近似将lighting项提取出来，化简，可以理解成模糊后的EnvMap， 仅与材质（roughness 和 反射方向有关）
 	float3 reflection = prefilteredReflection(R, roughness).rgb;
-	// 环境光对diffuse项的贡献Irradiance Environment Mapping
+	// 环境光对diffuse 反射项 Irradiance Environment Mapping
 	float3 irradiance = textureIrradiance.Sample(samplerIrradiance, N).rgb;
 
 	// Diffuse based on irradiance
@@ -171,7 +171,7 @@ float4 main(VSOutput input) : SV_TARGET
 
 	float3 F = F_SchlickR(max(dot(N, V), 0.0), F0, roughness);
 
-	// Specular reflectance
+	// Specular reflectance 通常有自己的颜色
 	float3 specular = reflection * (F * brdf.x + brdf.y);
 
 	// Ambient part
