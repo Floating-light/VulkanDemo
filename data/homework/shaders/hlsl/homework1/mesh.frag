@@ -196,6 +196,7 @@ float4 main(VSOutput input) : SV_TARGET
 
     //return getTextureColor(input);
     
+    
     color = pow(color, (1.0f / 2.2f).xxx);
     return float4(color, 1.0f);
 }
