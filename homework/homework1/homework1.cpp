@@ -25,6 +25,9 @@
 #endif
 #include "tiny_gltf.h"
 
+#include <format>
+#include <variant>
+
 #include "vulkanexamplebase.h"
 
 #define ENABLE_VALIDATION true
@@ -268,6 +271,83 @@ public:
 		}
 	}
 
+	void loadAnimation(tinygltf::Model& input)
+	{
+		for (size_t i = 0; i < input.animations.size(); ++i)
+		{
+			std::cout << std::format(" -> animation {}", i) << std::endl;;
+			tinygltf::Animation ani = input.animations[i];
+			for (size_t cha_index = 0; cha_index < ani.channels.size(); ++cha_index)
+			{
+				tinygltf::AnimationChannel chal = ani.channels[cha_index];
+				tinygltf::AnimationSampler samp = ani.samplers[chal.sampler];
+				std::cout << std::format("    target node: {}, target_path: {}, sampler： {}, interpolation: {}",
+					chal.target_node, chal.target_path, chal.sampler, samp.interpolation) << std::endl; 
+				auto retrieve_data_scalar = [](tinygltf::Model& input, size_t accessor_index) -> std::vector<float>
+				{
+					tinygltf::Accessor acc = input.accessors[accessor_index]; 
+					assert(acc.type == TINYGLTF_TYPE_SCALAR);
+					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float 
+
+					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView];
+					assert(buffer_view.byteStride <= sizeof(float)); 
+					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
+					
+					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
+					std::vector<float> ret_val(acc.count);
+					memcpy(ret_val.data(), data_begin, acc.count * sizeof(float));
+					return ret_val;
+				};
+				auto retrieve_data_vec3 = [](tinygltf::Model& input, size_t accessor_index)->std::vector<glm::vec3>
+				{
+					tinygltf::Accessor acc = input.accessors[accessor_index]; 
+					assert(acc.type == TINYGLTF_TYPE_VEC3);
+					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float
+
+					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView]; 
+					assert(buffer_view.byteStride <= 3*sizeof(float));
+					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
+
+					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
+
+					std::vector<glm::vec3> ret_val(acc.count);
+					memcpy(ret_val.data(), data_begin, acc.count * 3 * sizeof(float));
+					return ret_val;
+				};
+				{
+					tinygltf::Accessor acc_time = input.accessors[samp.input];
+					assert(acc_time.type == TINYGLTF_TYPE_SCALAR); 
+					std::vector<float> data = retrieve_data_scalar(input, samp.input);
+					std::cout << std::format("  > input size： {}, some data: {}", data.size(), data[0]) << std::endl;
+				}
+				{
+					tinygltf::Accessor acc_data = input.accessors[samp.output];
+					std::variant<std::vector<float>, std::vector<glm::vec3>> data_var;
+					if (acc_data.type == TINYGLTF_TYPE_VEC3)
+					{
+						std::vector<glm::vec3> anim_data = retrieve_data_vec3(input, samp.output);
+						data_var = anim_data;
+						std::cout << std::format("  > vec3 output size: {}", anim_data.size()) << std::endl;;
+					}
+					else if (acc_data.type == TINYGLTF_TYPE_SCALAR)
+					{
+						std::vector<float> anim_data = retrieve_data_scalar(input, samp.output);
+						data_var = anim_data;
+						std::cout << std::format("  > scalar output size: {} ", anim_data.size()) << std::endl;
+					}
+					else // TINYGLTF_TYPE_VEC4 for rotation
+					{
+						std::cout << std::format("  > unknow data type : {}", acc_data.type) << std::endl;
+					}
+					// auto real_data1 = std::get<std::vector<float>>(data_var);
+					// auto real_data2 = std::get<1>(data_var);
+					std::vector<float>* res = std::get_if<std::vector<float>>(&data_var);
+					std::cout << std::format("  > get if float vector: {}", static_cast<void*>(res)) << std::endl;
+				}
+			}
+		}
+	}
+
 	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer)
 	{
 		VulkanglTFModel::Node* node = new VulkanglTFModel::Node{};
@@ -438,8 +518,14 @@ public:
 				mat.CBO.memoryPropertyFlags = memoryFlags;
 
 				MaterialCBO data = {0,1,2,-1,-1};
-				data.emissiveTextureIndex = mat.emissiveTextureIdnex != -1 ? 3 : -1;
-				data.occlusionTextureIndex = mat.occlusionTextureIndex != -1 ? 4 : -1;
+				if (mat.emissiveTextureIdnex != -1)
+				{
+					data.emissiveTextureIndex =  3 ;
+				}
+				if (mat.occlusionTextureIndex != -1)
+				{
+					data.occlusionTextureIndex = 4;
+				}
 
 				VK_CHECK_RESULT(mat.CBO.map());
 				memcpy(mat.CBO.mapped, &data, sizeof(MaterialCBO));
@@ -456,8 +542,8 @@ public:
 				images[mat.baseColorTextureIndex].texture.descriptor,
 				images[mat.normalTextureIndex].texture.descriptor,
 				images[mat.metallicRoughnessTextureIndex].texture.descriptor,
-				images[std::clamp(mat.emissiveTextureIdnex, 0, 5)].texture.descriptor,
-				images[std::clamp(mat.occlusionTextureIndex, 0, 5)].texture.descriptor,
+				images[std::clamp(mat.emissiveTextureIdnex, 0, std::numeric_limits<int>::max())].texture.descriptor,
+				images[std::clamp(mat.occlusionTextureIndex, 0, std::numeric_limits<int>::max())].texture.descriptor,
 				images[0].texture.descriptor,
 			};
 			std::vector<VkWriteDescriptorSet> writeDescriptorSets = {
@@ -524,6 +610,7 @@ public:
 
 	VulkanglTFModel glTFModel;
 
+	// 每个Pipeline都应该接受的Uniform参数，表示场景的全局状态
 	struct ShaderData {
 		vks::Buffer buffer;
 		struct Values {
@@ -543,8 +630,8 @@ public:
 	VkDescriptorSet descriptorSet;
 
 	struct DescriptorSetLayouts {
-		VkDescriptorSetLayout matrices;
-		VkDescriptorSetLayout textures;
+		VkDescriptorSetLayout matrices;// 场景参数
+		VkDescriptorSetLayout textures;// 逐mesh的参数
 	} descriptorSetLayouts;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
@@ -611,8 +698,11 @@ public:
 			vkCmdSetScissor(drawCmdBuffers[i], 0, 1, &scissor);
 			// Bind scene matrices descriptor to set 0
 			vkCmdBindDescriptorSets(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 0, 1, &descriptorSet, 0, nullptr);
+
+			// Draw model
 			vkCmdBindPipeline(drawCmdBuffers[i], VK_PIPELINE_BIND_POINT_GRAPHICS, wireframe ? pipelines.wireframe : pipelines.solid);
 			glTFModel.draw(drawCmdBuffers[i], pipelineLayout);
+
 			drawUI(drawCmdBuffers[i]);
 			vkCmdEndRenderPass(drawCmdBuffers[i]);
 			VK_CHECK_RESULT(vkEndCommandBuffer(drawCmdBuffers[i]));
@@ -650,6 +740,7 @@ public:
 				const tinygltf::Node node = glTFInput.nodes[scene.nodes[i]];
 				glTFModel.loadNode(node, glTFInput, nullptr, indexBuffer, vertexBuffer);
 			}
+			glTFModel.loadAnimation(glTFInput);
 		}
 		else {
 			vks::tools::exitFatal("Could not open the glTF file.\n\nThe file is part of the additional asset pack.\n\nRun \"download_assets.py\" in the repository root to download the latest version.", -1);

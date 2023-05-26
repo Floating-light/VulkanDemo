@@ -90,7 +90,7 @@ float3 getTextureEmissive(VSOutput input)
     }
     else
     {
-        return float3(1.0f, 1.0f, 1.0f);
+        return float3(.0f, .0f, .0f);
     }
 }
 
@@ -183,19 +183,13 @@ float4 main(VSOutput input) : SV_TARGET
     
     float3 Lo = specularContribution(input.UV, L, V, N, F0, metallic, roughness);
     
-    float3 diffuse = calculateAlbedoForF0(input.UV);
+    float3 diffuse = calculateAlbedoForF0(input.UV) ;
     
 	float3 specular = pow(max(dot(R, V), 0.0), 16.0) * float3(0.75, 0.75, 0.75);
 
     float3 ambient = diffuse * getTextureOcclusionTexture(input);
-    //float emmissive = getTextureEmissive(input);
-    float3 color = (ambient + Lo);
-    //float3 color = getTextureOcclusionTexture(input);
-    //float3 color = float3(roughness, roughness, roughness);
     
-
-    //return getTextureColor(input);
-    
+    float3 color = getTextureEmissive(input) + (ambient + Lo);
     
     color = pow(color, (1.0f / 2.2f).xxx);
     return float4(color, 1.0f);
