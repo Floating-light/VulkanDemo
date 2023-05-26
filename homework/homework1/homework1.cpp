@@ -27,9 +27,11 @@
 
 #include <format>
 #include <variant>
+#include <memory>
 
 #include "vulkanexamplebase.h"
 
+#include "animator.h"
 #define ENABLE_VALIDATION true
 
 // Contains everything required to render a glTF model in Vulkan
@@ -149,6 +151,7 @@ public:
 	std::vector<Texture> textures;
 	std::vector<Material> materials;
 	std::vector<Node*> nodes;
+	std::unordered_map<int, std::shared_ptr<Animator>> animations; 
 
 	~VulkanglTFModel()
 	{
@@ -167,7 +170,23 @@ public:
 			vkFreeMemory(vulkanDevice->logicalDevice, image.texture.deviceMemory, nullptr);
 		}
 	}
+	// T the data type 
+	template<typename T>
+	std::vector<T> retrieve_data(tinygltf::Model& input, size_t accessor_index) 
+	{
+		tinygltf::Accessor acc = input.accessors[accessor_index];
+		//assert(acc.type == TINYGLTF_TYPE_SCALAR);
+		//assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float 
 
+		tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView];
+		assert(buffer_view.byteStride <= sizeof(T)); 
+		tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
+
+		unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
+		std::vector<T> ret_val(acc.count); 
+		memcpy(ret_val.data(), data_begin, acc.count * sizeof(T));
+		return ret_val;
+	};
 	/*
 		glTF loading functions
 
@@ -283,6 +302,18 @@ public:
 				tinygltf::AnimationSampler samp = ani.samplers[chal.sampler];
 				std::cout << std::format("    target node: {}, target_path: {}, sampler： {}, interpolation: {}",
 					chal.target_node, chal.target_path, chal.sampler, samp.interpolation) << std::endl; 
+				
+				std::shared_ptr<Animator> my_animator = nullptr;
+				if (auto itr = animations.find(chal.target_node);itr != animations.end())
+				{
+					my_animator = itr->second;
+				}
+				else 
+				{
+					my_animator = std::make_shared<Animator>();
+					animations[chal.target_node] = my_animator;
+				}
+
 				auto retrieve_data_scalar = [](tinygltf::Model& input, size_t accessor_index) -> std::vector<float>
 				{
 					tinygltf::Accessor acc = input.accessors[accessor_index]; 
@@ -314,10 +345,27 @@ public:
 					memcpy(ret_val.data(), data_begin, acc.count * 3 * sizeof(float));
 					return ret_val;
 				};
+				auto retrieve_data_vec4 = [](tinygltf::Model& input, size_t accessor_index)->std::vector<glm::vec4>
+				{
+					tinygltf::Accessor acc = input.accessors[accessor_index];
+					assert(acc.type == TINYGLTF_TYPE_VEC4);
+					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float
+
+					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView];
+					assert(buffer_view.byteStride <= 4 * sizeof(float));
+					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
+
+					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
+
+					std::vector<glm::vec4> ret_val(acc.count); 
+					memcpy(ret_val.data(), data_begin, acc.count * 4 * sizeof(float));
+					return ret_val;
+				};
 				{
 					tinygltf::Accessor acc_time = input.accessors[samp.input];
 					assert(acc_time.type == TINYGLTF_TYPE_SCALAR); 
 					std::vector<float> data = retrieve_data_scalar(input, samp.input);
+					my_animator->setTimes(samp.input,data);
 					std::cout << std::format("  > input size： {}, some data: {}", data.size(), data[0]) << std::endl;
 				}
 				{
@@ -326,16 +374,20 @@ public:
 					if (acc_data.type == TINYGLTF_TYPE_VEC3)
 					{
 						std::vector<glm::vec3> anim_data = retrieve_data_vec3(input, samp.output);
-						data_var = anim_data;
+						my_animator->setTranslation(anim_data);
 						std::cout << std::format("  > vec3 output size: {}", anim_data.size()) << std::endl;;
 					}
 					else if (acc_data.type == TINYGLTF_TYPE_SCALAR)
 					{
 						std::vector<float> anim_data = retrieve_data_scalar(input, samp.output);
-						data_var = anim_data;
+						my_animator->setScales(anim_data);
 						std::cout << std::format("  > scalar output size: {} ", anim_data.size()) << std::endl;
 					}
-					else // TINYGLTF_TYPE_VEC4 for rotation
+					else if(acc_data.type == TINYGLTF_TYPE_VEC4)// TINYGLTF_TYPE_VEC4 for rotation
+					{
+						my_animator->setRotation(retrieve_data<glm::vec4>(input, samp.output));
+					}
+					else
 					{
 						std::cout << std::format("  > unknow data type : {}", acc_data.type) << std::endl;
 					}
