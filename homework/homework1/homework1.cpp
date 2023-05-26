@@ -342,7 +342,8 @@ public:
 					// auto real_data1 = std::get<std::vector<float>>(data_var);
 					// auto real_data2 = std::get<1>(data_var);
 					std::vector<float>* res = std::get_if<std::vector<float>>(&data_var);
-					std::cout << std::format("  > get if float vector: {}", static_cast<void*>(res)) << std::endl;
+					std::cout << std::format("  > get if float vector: {}", static_cast<void*>(res))
+						<< std::endl << "--------" << std::endl;
 				}
 			}
 		}
