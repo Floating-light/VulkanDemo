@@ -91,6 +91,9 @@ public:
 		std::vector<Node*> children;
 		Mesh mesh;
 		glm::mat4 matrix;
+		glm::mat4 anim_mat = glm::mat4(1.0f);
+		glm::mat4 getNodeMatrix() const { return matrix * anim_mat; }
+		int nodeId = -1;
 		~Node() {
 			for (auto& child : children) {
 				delete child;
@@ -303,6 +306,7 @@ public:
 				std::cout << std::format("    target node: {}, target_path: {}, sampler： {}, interpolation: {}",
 					chal.target_node, chal.target_path, chal.sampler, samp.interpolation) << std::endl; 
 				
+				// get or create the Animator
 				std::shared_ptr<Animator> my_animator = nullptr;
 				if (auto itr = animations.find(chal.target_node);itr != animations.end())
 				{
@@ -314,99 +318,55 @@ public:
 					animations[chal.target_node] = my_animator;
 				}
 
-				auto retrieve_data_scalar = [](tinygltf::Model& input, size_t accessor_index) -> std::vector<float>
-				{
-					tinygltf::Accessor acc = input.accessors[accessor_index]; 
-					assert(acc.type == TINYGLTF_TYPE_SCALAR);
-					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float 
-
-					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView];
-					assert(buffer_view.byteStride <= sizeof(float)); 
-					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
-					
-					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
-					std::vector<float> ret_val(acc.count);
-					memcpy(ret_val.data(), data_begin, acc.count * sizeof(float));
-					return ret_val;
-				};
-				auto retrieve_data_vec3 = [](tinygltf::Model& input, size_t accessor_index)->std::vector<glm::vec3>
-				{
-					tinygltf::Accessor acc = input.accessors[accessor_index]; 
-					assert(acc.type == TINYGLTF_TYPE_VEC3);
-					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float
-
-					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView]; 
-					assert(buffer_view.byteStride <= 3*sizeof(float));
-					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
-
-					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
-
-					std::vector<glm::vec3> ret_val(acc.count);
-					memcpy(ret_val.data(), data_begin, acc.count * 3 * sizeof(float));
-					return ret_val;
-				};
-				auto retrieve_data_vec4 = [](tinygltf::Model& input, size_t accessor_index)->std::vector<glm::vec4>
-				{
-					tinygltf::Accessor acc = input.accessors[accessor_index];
-					assert(acc.type == TINYGLTF_TYPE_VEC4);
-					assert(tinygltf::GetComponentSizeInBytes(acc.componentType) == 4);// float
-
-					tinygltf::BufferView buffer_view = input.bufferViews[acc.bufferView];
-					assert(buffer_view.byteStride <= 4 * sizeof(float));
-					tinygltf::Buffer buffer = input.buffers[buffer_view.buffer];
-
-					unsigned char* data_begin = reinterpret_cast<unsigned char*>(&buffer.data[buffer_view.byteOffset + acc.byteOffset]);
-
-					std::vector<glm::vec4> ret_val(acc.count); 
-					memcpy(ret_val.data(), data_begin, acc.count * 4 * sizeof(float));
-					return ret_val;
-				};
+				// read timeline input 
 				{
 					tinygltf::Accessor acc_time = input.accessors[samp.input];
 					assert(acc_time.type == TINYGLTF_TYPE_SCALAR); 
-					std::vector<float> data = retrieve_data_scalar(input, samp.input);
-					my_animator->setTimes(samp.input,data);
-					std::cout << std::format("  > input size： {}, some data: {}", data.size(), data[0]) << std::endl;
+					my_animator->setTimes(samp.input,retrieve_data<float>(input,samp.input));
 				}
+				// read animation data input 
 				{
 					tinygltf::Accessor acc_data = input.accessors[samp.output];
-					std::variant<std::vector<float>, std::vector<glm::vec3>> data_var;
-					if (acc_data.type == TINYGLTF_TYPE_VEC3)
+					std::string log_str;
+					if (chal.target_path == "translation")
 					{
-						std::vector<glm::vec3> anim_data = retrieve_data_vec3(input, samp.output);
-						my_animator->setTranslation(anim_data);
-						std::cout << std::format("  > vec3 output size: {}", anim_data.size()) << std::endl;;
+						assert(acc_data.type == TINYGLTF_TYPE_VEC3);
+						std::vector<glm::vec3> data = retrieve_data<glm::vec3>(input, samp.output);
+						log_str = std::format("vec3, length: {}", data.size()); 
+						my_animator->setTranslation(std::move(data)); 
 					}
-					else if (acc_data.type == TINYGLTF_TYPE_SCALAR)
+					else if (chal.target_path == "scale")
 					{
-						std::vector<float> anim_data = retrieve_data_scalar(input, samp.output);
-						my_animator->setScales(anim_data);
-						std::cout << std::format("  > scalar output size: {} ", anim_data.size()) << std::endl;
+						assert(acc_data.type == TINYGLTF_TYPE_VEC3); 
+						std::vector<glm::vec3> data = retrieve_data<glm::vec3>(input, samp.output);
+						log_str = std::format("vec3, length: {}", data.size());
+						my_animator->setScales(std::move(data));
 					}
-					else if(acc_data.type == TINYGLTF_TYPE_VEC4)// TINYGLTF_TYPE_VEC4 for rotation
+					else if(chal.target_path == "rotation")// TINYGLTF_TYPE_VEC4 for rotation
 					{
-						my_animator->setRotation(retrieve_data<glm::vec4>(input, samp.output));
+						assert(acc_data.type == TINYGLTF_TYPE_VEC4);
+						std::vector<glm::vec4> data = retrieve_data<glm::vec4>(input, samp.output);
+						log_str = std::format("vec4, length: {}", data.size());
+						my_animator->setRotation(std::move(data));
 					}
 					else
 					{
-						std::cout << std::format("  > unknow data type : {}", acc_data.type) << std::endl;
+						log_str = std::format("  > unknow data type : {}", acc_data.type);
 					}
-					// auto real_data1 = std::get<std::vector<float>>(data_var);
-					// auto real_data2 = std::get<1>(data_var);
-					std::vector<float>* res = std::get_if<std::vector<float>>(&data_var);
-					std::cout << std::format("  > get if float vector: {}", static_cast<void*>(res))
+					std::cout << std::format("  > get data {}", log_str)   
 						<< std::endl << "--------" << std::endl;
 				}
 			}
 		}
 	}
 
-	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer)
+	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer, int nodeId)
 	{
 		VulkanglTFModel::Node* node = new VulkanglTFModel::Node{};
 		node->matrix = glm::mat4(1.0f);
 		node->parent = parent;
-
+		node->nodeId = nodeId;
+		std::cout << std::format("loadNode {}\n", nodeId);
 		// Get the local node matrix
 		// It's either made up from translation, rotation, scale or a 4x4 matrix
 		if (inputNode.translation.size() == 3) {
@@ -426,7 +386,7 @@ public:
 		// Load node's children
 		if (inputNode.children.size() > 0) {
 			for (size_t i = 0; i < inputNode.children.size(); i++) {
-				loadNode(input.nodes[inputNode.children[i]], input , node, indexBuffer, vertexBuffer);
+				loadNode(input.nodes[inputNode.children[i]], input , node, indexBuffer, vertexBuffer, inputNode.children[i]);
 			}
 		}
 
@@ -610,6 +570,15 @@ public:
 		
 	}
 
+	void updateAnimation(VulkanglTFModel::Node* node, float deltaSeconds)
+	{
+		if (auto itr = animations.find(node->nodeId); itr != animations.end())
+		{
+			std::shared_ptr<Animator> ani = itr->second;
+			node->anim_mat = ani->updateAnimation(deltaSeconds);
+		}
+	}
+
 	/*
 		glTF rendering functions
 	*/
@@ -620,10 +589,10 @@ public:
 		if (node->mesh.primitives.size() > 0) {
 			// Pass the node's matrix via push constants
 			// Traverse the node hierarchy to the top-most parent to get the final matrix of the current node
-			glm::mat4 nodeMatrix = node->matrix;
+			glm::mat4 nodeMatrix = node->getNodeMatrix();
 			VulkanglTFModel::Node* currentParent = node->parent;
 			while (currentParent) {
-				nodeMatrix = currentParent->matrix * nodeMatrix;
+				nodeMatrix = currentParent->getNodeMatrix() * nodeMatrix;
 				currentParent = currentParent->parent;
 			}
 			// Pass the final matrix to the vertex shader using push constants
@@ -648,12 +617,16 @@ public:
 		VkDeviceSize offsets[1] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertices.buffer, offsets);
 		vkCmdBindIndexBuffer(commandBuffer, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
+
+		for (auto& node : nodes) {
+			updateAnimation(node,0.01);
+		}
+
 		// Render all nodes at top-level
 		for (auto& node : nodes) {
 			drawNode(commandBuffer, pipelineLayout, node);
 		}
 	}
-
 };
 
 class VulkanExample : public VulkanExampleBase
@@ -684,7 +657,7 @@ public:
 
 	struct DescriptorSetLayouts {
 		VkDescriptorSetLayout matrices;// 场景参数
-		VkDescriptorSetLayout textures;// 逐mesh的参数
+		VkDescriptorSetLayout material;// 逐mesh的参数
 	} descriptorSetLayouts;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
@@ -708,7 +681,7 @@ public:
 
 		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.matrices, nullptr);
-		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.textures, nullptr);
+		vkDestroyDescriptorSetLayout(device, descriptorSetLayouts.material, nullptr);
 
 		shaderData.buffer.destroy();
 	}
@@ -791,7 +764,7 @@ public:
 			const tinygltf::Scene& scene = glTFInput.scenes[0];
 			for (size_t i = 0; i < scene.nodes.size(); i++) {
 				const tinygltf::Node node = glTFInput.nodes[scene.nodes[i]];
-				glTFModel.loadNode(node, glTFInput, nullptr, indexBuffer, vertexBuffer);
+				glTFModel.loadNode(node, glTFInput, nullptr, indexBuffer, vertexBuffer, scene.nodes[i]);
 			}
 			glTFModel.loadAnimation(glTFInput);
 		}
@@ -914,10 +887,10 @@ public:
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, 6) // 材质中可能用到的最多纹理数量
 		};
 		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), materialTexturesLayout.size());
-		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.textures));
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.material));
 		
 		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material)
-		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.textures };
+		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.material };
 		VkPipelineLayoutCreateInfo pipelineLayoutCI= vks::initializers::pipelineLayoutCreateInfo(setLayouts.data(), static_cast<uint32_t>(setLayouts.size()));
 		// We will use push constants to push the local matrices of a primitive to the vertex shader
 		// PushConstant是向Shader中传递常量, 一种uniform，但是不用创建Buffer，直接向管线写入这个值。在Shader侧，要定义个结构体接收它
@@ -935,13 +908,13 @@ public:
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 		// Descriptor sets for materials
 		//for (auto& image : glTFModel.images) {
-		//	const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.textures, 1);
+		//	const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.material, 1);
 		//	VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &image.descriptorSet)); // 为当前Texture创建它的DescritorSet
 		//	// 将当前Iamge信息写入到DescritporSet
 		//	VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(image.descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, &image.texture.descriptor);
 		//	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
 		//}
-		glTFModel.setupDescriptorSet(vulkanDevice, descriptorPool, descriptorSetLayouts.textures);
+		glTFModel.setupDescriptorSet(vulkanDevice, descriptorPool, descriptorSetLayouts.material);
 
 
 	}
