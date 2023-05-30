@@ -92,6 +92,8 @@ public:
 		Mesh mesh;
 		glm::mat4 matrix;
 		glm::mat4 anim_mat = glm::mat4(1.0f);
+		VkDescriptorSet descriptorSet;
+		vks::Buffer CBO;
 		glm::mat4 getNodeMatrix() const { return matrix * anim_mat; }
 		int nodeId = -1;
 		~Node() {
@@ -155,6 +157,17 @@ public:
 	std::vector<Material> materials;
 	std::vector<Node*> nodes;
 	std::unordered_map<int, std::shared_ptr<Animator>> animations; 
+
+	void breadthFirstSearch(VulkanglTFModel::Node* inNode, std::function<void(VulkanglTFModel::Node*)> func)
+	{
+		func(inNode);
+
+		std::for_each(inNode->children.begin(), inNode->children.end(),
+			[&](VulkanglTFModel::Node* inNode) 
+			{
+				breadthFirstSearch(inNode, func);
+			});
+	}
 
 	~VulkanglTFModel()
 	{
@@ -499,7 +512,8 @@ public:
 	}
 
 	// @param descriptorSetLayout 是材质需要的参数的Layout
-	void setupDescriptorSet(vks::VulkanDevice* inDevice, VkDescriptorPool descriptorPool, VkDescriptorSetLayout descritorSetLayout) 
+	void setupDescriptorSet(vks::VulkanDevice* inDevice, VkDescriptorPool descriptorPool, 
+		VkDescriptorSetLayout descritorSetLayout, VkDescriptorSetLayout nodeDescriptorSetLayout)
 	{
 		VkDevice device = inDevice->logicalDevice;
 		for (size_t i = 0; i < materials.size(); i++)
@@ -567,7 +581,27 @@ public:
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(),0,NULL);
 		}
-		
+		size_t nodeUniformNum = 0;
+		for (size_t i = 0; i < nodes.size(); ++i)
+		{
+			breadthFirstSearch(nodes[i], [&](VulkanglTFModel::Node* node)
+				{
+					inDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+						VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+						&node->CBO, sizeof(decltype(node->getNodeMatrix())));  
+					VK_CHECK_RESULT(node->CBO.map());// map persistent, will update every frame
+					nodeUniformNum++;
+					VkDescriptorSetAllocateInfo nodeDescriptorSetAllcInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &nodeDescriptorSetLayout, 1);
+					VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &nodeDescriptorSetAllcInfo, &node->descriptorSet));
+					std::cout << std::format("create node uniform buffer {}", nodeUniformNum) << std::endl;
+
+					VkWriteDescriptorSet writeNodeDesc = vks::initializers::writeDescriptorSet(node->descriptorSet, 
+						VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &node->CBO.descriptor, 1);
+
+					vkUpdateDescriptorSets(device, 1, &writeNodeDesc, 0, NULL);
+				});
+
+		}
 	}
 
 	void updateAnimation(VulkanglTFModel::Node* node, float deltaSeconds)
@@ -576,6 +610,20 @@ public:
 		{
 			std::shared_ptr<Animator> ani = itr->second;
 			node->anim_mat = ani->updateAnimation(deltaSeconds);
+		}
+		glm::mat4 mat = node->getNodeMatrix();
+
+		VulkanglTFModel::Node* curParent = node->parent;
+		while (curParent)
+		{
+			mat = curParent->getNodeMatrix()* mat;
+			curParent = curParent->parent;
+		}
+		memcpy(node->CBO.mapped, &(mat), sizeof(mat));
+
+		for (size_t i = 0; i < node->children.size(); ++i)
+		{
+			updateAnimation(node->children[i], deltaSeconds);
 		}
 	}
 
@@ -597,6 +645,8 @@ public:
 			}
 			// Pass the final matrix to the vertex shader using push constants
 			vkCmdPushConstants(commandBuffer, pipelineLayout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(glm::mat4), &nodeMatrix);
+			vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 2, 1, &(node->descriptorSet), 0, nullptr);
+
 			for (VulkanglTFModel::Primitive& primitive : node->mesh.primitives) {
 				if (primitive.indexCount > 0) {
 					//vkCmdBindDescriptorSets(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, pipelineLayout, 1, 1, &images[texture.imageIndex].descriptorSet, 0, nullptr);
@@ -617,10 +667,6 @@ public:
 		VkDeviceSize offsets[1] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, &vertices.buffer, offsets);
 		vkCmdBindIndexBuffer(commandBuffer, indices.buffer, 0, VK_INDEX_TYPE_UINT32);
-
-		for (auto& node : nodes) {
-			updateAnimation(node,0.01);
-		}
 
 		// Render all nodes at top-level
 		for (auto& node : nodes) {
@@ -658,6 +704,7 @@ public:
 	struct DescriptorSetLayouts {
 		VkDescriptorSetLayout matrices;// 场景参数
 		VkDescriptorSetLayout material;// 逐mesh的参数
+		VkDescriptorSetLayout nodeParams;// 每个Node的参数
 	} descriptorSetLayouts;
 
 	VulkanExample() : VulkanExampleBase(ENABLE_VALIDATION)
@@ -858,39 +905,37 @@ public:
 		*/
 
 		std::vector<VkDescriptorPoolSize> poolSizes = {
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1 + glTFModel.images.size()),
-			// One combined image sampler per model image/texture
+			// 1 scene info + object info per node
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5 + 60/*glTFModel.nodes.size()*/), 
+			// One combined image sampler per model image/texture how many textures per material ?
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(glTFModel.materials.size() * 12)),
 		};
-		// One set for matrices and one per model image/texture
-		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size() * 2) + 1;
-		// typedef struct VkDescriptorPoolCreateInfo {
-		//	VkStructureType                sType;
-		//	const void* pNext;
-		//	VkDescriptorPoolCreateFlags    flags;
-		//	uint32_t                       maxSets;
-		//	uint32_t                       poolSizeCount;
-		//	const VkDescriptorPoolSize* pPoolSizes;
-		//} VkDescriptorPoolCreateInfo;
+		// One set for scene matrices and one per model for model info (model transform and animation data), one set per material for textures
+		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size() + glTFModel.nodes.size()) + 1;
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, maxSetCount);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
-		// Descriptor set layout for passing matrices, 绑定是指绑定到Shader中的位置 -- > 第0个UBO
+		// Descriptor set layout for passing scene matrices, 绑定是指绑定到Shader中的位置 -- > 第0个UBO
 		VkDescriptorSetLayoutBinding setLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0);
 		VkDescriptorSetLayoutCreateInfo descriptorSetLayoutCI = vks::initializers::descriptorSetLayoutCreateInfo(&setLayoutBinding, 1);
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.matrices));
 		
+		// Descriptor set layout for node info
+		VkDescriptorSetLayoutBinding nodeInfoSetLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0, 1);
+		VkDescriptorSetLayoutCreateInfo nodeDescriptorSetLayoutCI = vks::initializers::descriptorSetLayoutCreateInfo(&nodeInfoSetLayoutBinding, 1);
+		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &nodeDescriptorSetLayoutCI, nullptr, &descriptorSetLayouts.nodeParams));
+		
 		// Descriptor set layout for passing material textures, 绑定到第0 个位置，Texture和Sampler, 用于PixelShader
 		// space 1 
 		std::array<VkDescriptorSetLayoutBinding, 2> materialTexturesLayout = {
-			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,VK_SHADER_STAGE_FRAGMENT_BIT,0 ,1),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_FRAGMENT_BIT,0 ,1),
 			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, VK_SHADER_STAGE_FRAGMENT_BIT, 1, 6) // 材质中可能用到的最多纹理数量
 		};
 		VkDescriptorSetLayoutCreateInfo materialSetCI = vks::initializers::descriptorSetLayoutCreateInfo(materialTexturesLayout.data(), materialTexturesLayout.size());
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &materialSetCI, nullptr, &descriptorSetLayouts.material));
 		
-		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material)
-		std::array<VkDescriptorSetLayout, 2> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.material };
+		// Pipeline layout using both descriptor sets (set 0 = matrices, set 1 = material, set 2 = model info)
+		std::array<VkDescriptorSetLayout, 3> setLayouts = { descriptorSetLayouts.matrices, descriptorSetLayouts.material, descriptorSetLayouts.nodeParams };
 		VkPipelineLayoutCreateInfo pipelineLayoutCI= vks::initializers::pipelineLayoutCreateInfo(setLayouts.data(), static_cast<uint32_t>(setLayouts.size()));
 		// We will use push constants to push the local matrices of a primitive to the vertex shader
 		// PushConstant是向Shader中传递常量, 一种uniform，但是不用创建Buffer，直接向管线写入这个值。在Shader侧，要定义个结构体接收它
@@ -906,17 +951,9 @@ public:
 		VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &descriptorSet));
 		VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(descriptorSet, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &shaderData.buffer.descriptor);
 		vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
-		// Descriptor sets for materials
-		//for (auto& image : glTFModel.images) {
-		//	const VkDescriptorSetAllocateInfo allocInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &descriptorSetLayouts.material, 1);
-		//	VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &allocInfo, &image.descriptorSet)); // 为当前Texture创建它的DescritorSet
-		//	// 将当前Iamge信息写入到DescritporSet
-		//	VkWriteDescriptorSet writeDescriptorSet = vks::initializers::writeDescriptorSet(image.descriptorSet, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 0, &image.texture.descriptor);
-		//	vkUpdateDescriptorSets(device, 1, &writeDescriptorSet, 0, nullptr);
-		//}
-		glTFModel.setupDescriptorSet(vulkanDevice, descriptorPool, descriptorSetLayouts.material);
-
-
+		
+		// descriptor set for each node 
+		glTFModel.setupDescriptorSet(vulkanDevice, descriptorPool, descriptorSetLayouts.material, descriptorSetLayouts.nodeParams);
 	}
 
 	void preparePipelines()
@@ -990,7 +1027,13 @@ public:
 		// Map persistent
 		VK_CHECK_RESULT(shaderData.buffer.map());
 
-		updateUniformBuffers();
+		// TODO : Create model uniform buffer
+
+		//updateUniformBuffers();
+		shaderData.values.projection = camera.matrices.perspective;
+		shaderData.values.model = camera.matrices.view;
+		shaderData.values.viewPos = camera.viewPos;
+		memcpy(shaderData.buffer.mapped, &shaderData.values, sizeof(shaderData.values));
 	}
 
 	void updateUniformBuffers()
@@ -999,6 +1042,11 @@ public:
 		shaderData.values.model = camera.matrices.view;
 		shaderData.values.viewPos = camera.viewPos;
 		memcpy(shaderData.buffer.mapped, &shaderData.values, sizeof(shaderData.values));
+
+		// 
+		for (auto& node : glTFModel.nodes) {
+			glTFModel.updateAnimation(node, 0.01);
+		}
 	}
 
 	void prepare()

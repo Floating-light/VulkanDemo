@@ -19,6 +19,16 @@ struct UBO
 
 cbuffer ubo : register(b0) { UBO ubo; }
 
+struct ModelInfo
+{
+    float4x4 model;
+};
+
+cbuffer modelInfo : register(b0, space2)
+{
+    ModelInfo modelInfo;
+}
+
 struct PushConsts {
 	float4x4 model;
 };
@@ -41,13 +51,13 @@ VSOutput main(VSInput input)
 	output.Normal = input.Normal;
 	output.Color = input.Color;
 	output.UV = input.UV;
-	output.Pos = mul(ubo.projection, mul(ubo.view, mul(primitive.model, float4(input.Pos.xyz, 1.0))));
+    output.Pos = mul(ubo.projection, mul(ubo.view, mul(modelInfo.model, float4(input.Pos.xyz, 1.0))));
 
 	
 	float4 pos = mul(ubo.view, float4(input.Pos, 1.0));
     //output.Normal = mul(mul((float3x3) ubo.view,(float3x3)primitive.model),input.Normal);
-    output.Normal = mul((float3x3)primitive.model,input.Normal);
-    output.Tangent = mul((float3x3)primitive.model, input.Tangent);
+    output.Normal = mul((float3x3) modelInfo.model, input.Normal);
+    output.Tangent = mul((float3x3) modelInfo.model, input.Tangent);
 	output.LightVec = ubo.lightPos.xyz - pos.xyz;
 	output.ViewVec = ubo.viewPos.xyz - pos.xyz;
 	return output;
