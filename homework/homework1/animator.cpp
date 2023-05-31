@@ -16,25 +16,24 @@ glm::mat4 Animator::updateAnimation(float deltaTime)
 		newTime -= maxTime;
 	}
 	auto itr = std::lower_bound(times.begin(), times.end(), newTime);
-	const float lerp_ratio = (newTime - *itr) / (*(itr + 1) - *itr);
-	const size_t index = std::distance(times.begin(), itr);
+	const size_t index = std::distance(times.begin(), itr) ; 
+	const size_t nextIndex = int(index + 1) % int(times.size());
+	const float lerp_ratio = (newTime - *itr) / (times[nextIndex] - *itr);
 	{
-		const glm::vec3& f = translation[index];
-		const glm::vec3& s = translation[index + 1];
-		//glm::vec3 v = f + (s - f) * lerp_ratio;
-		retval = glm::translate(retval, glm::lerp(f, s, lerp_ratio));
-		
-	}
-
-	{
-		glm::quat f = glm::make_quat(reinterpret_cast<const float*>(& rotation[index]));
-		glm::quat s = glm::make_quat(reinterpret_cast<const float*>(&rotation[index+1]));
+		glm::quat f = glm::make_quat(reinterpret_cast<const float*>(&rotation[index]));
+		glm::quat s = glm::make_quat(reinterpret_cast<const float*>(&rotation[nextIndex]));
 		glm::slerp(f, s, lerp_ratio);
 		retval *= glm::mat4(glm::slerp(f, s, lerp_ratio));
 	}
 	{
 		glm::vec3 f = scale[index];
-		retval = glm::scale(retval, glm::lerp(scale[index], scale[index + 1], lerp_ratio));
+		retval = glm::scale(retval, glm::lerp(scale[index], scale[nextIndex], lerp_ratio));
+	}
+	{
+		const glm::vec3& f = translation[index];
+		const glm::vec3& s = translation[nextIndex];
+		//glm::vec3 v = f + (s - f) * lerp_ratio;
+		retval = glm::translate(retval, glm::lerp(f, s, lerp_ratio));
 	}
 	currentTime = newTime;
 	return retval;

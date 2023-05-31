@@ -28,6 +28,7 @@
 #include <format>
 #include <variant>
 #include <memory>
+#include <queue>
 
 #include "vulkanexamplebase.h"
 
@@ -158,15 +159,62 @@ public:
 	std::vector<Node*> nodes;
 	std::unordered_map<int, std::shared_ptr<Animator>> animations; 
 
-	void breadthFirstSearch(VulkanglTFModel::Node* inNode, std::function<void(VulkanglTFModel::Node*)> func)
+	void breadthFirstSearch(VulkanglTFModel::Node* inNode, std::function<void(VulkanglTFModel::Node*)> func) const
 	{
+		if (!inNode)
+		{
+			return;
+		}
+		std::queue<Node*> nodeQueue;
+		nodeQueue.push(inNode);
+		while (!nodeQueue.empty())
+		{
+			Node* cur = nodeQueue.front();
+			nodeQueue.pop();
+
+			func(cur);
+
+			std::for_each(cur->children.begin(), cur->children.end(),
+				[&](Node* n)
+				{
+					nodeQueue.push(n);
+				});
+		}
+		
+	}
+
+	void depthFirstSearch(VulkanglTFModel::Node* inNode, std::function<void(VulkanglTFModel::Node*)> func) const 
+	{
+		if (!inNode)
+		{
+			return;
+		}
+
 		func(inNode);
 
 		std::for_each(inNode->children.begin(), inNode->children.end(),
-			[&](VulkanglTFModel::Node* inNode) 
+			[&](VulkanglTFModel::Node* inNode)
 			{
-				breadthFirstSearch(inNode, func);
+				depthFirstSearch(inNode, func);
 			});
+	}
+
+	int32_t getNodeNum() const 
+	{
+		int32_t nodeNum = 0; 
+		std::for_each(nodes.begin(), nodes.end(),  
+			[&](Node* inNode)  
+			{
+				breadthFirstSearch(inNode,   
+					[&](Node* n)  
+					{
+						if (n) 
+						{
+							++nodeNum;
+						}
+					});
+			});
+		return nodeNum;
 	}
 
 	~VulkanglTFModel()
@@ -395,7 +443,7 @@ public:
 		if (inputNode.matrix.size() == 16) {
 			node->matrix = glm::make_mat4x4(inputNode.matrix.data());
 		};
-
+		
 		// Load node's children
 		if (inputNode.children.size() > 0) {
 			for (size_t i = 0; i < inputNode.children.size(); i++) {
@@ -510,7 +558,23 @@ public:
 			nodes.push_back(node);
 		}
 	}
+	void prepareUniformBuffers(vks::VulkanDevice* inDevice)
+	{
+		size_t nodeUniformNum = 0;
+		for (size_t i = 0; i < nodes.size(); ++i)
+		{
+			breadthFirstSearch(nodes[i], [&](VulkanglTFModel::Node* node)
+				{
+					inDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+						VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+						&node->CBO, sizeof(decltype(node->getNodeMatrix())));
+					VK_CHECK_RESULT(node->CBO.map());// map persistent, will update every frame
+					nodeUniformNum++;
 
+					std::cout << std::format("create node uniform buffer {}", nodeUniformNum) << std::endl;
+				});
+		}
+	}
 	// @param descriptorSetLayout 是材质需要的参数的Layout
 	void setupDescriptorSet(vks::VulkanDevice* inDevice, VkDescriptorPool descriptorPool, 
 		VkDescriptorSetLayout descritorSetLayout, VkDescriptorSetLayout nodeDescriptorSetLayout)
@@ -581,23 +645,15 @@ public:
 
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(),0,NULL);
 		}
-		size_t nodeUniformNum = 0;
 		for (size_t i = 0; i < nodes.size(); ++i)
 		{
 			breadthFirstSearch(nodes[i], [&](VulkanglTFModel::Node* node)
 				{
-					inDevice->createBuffer(VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
-						VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
-						&node->CBO, sizeof(decltype(node->getNodeMatrix())));  
-					VK_CHECK_RESULT(node->CBO.map());// map persistent, will update every frame
-					nodeUniformNum++;
 					VkDescriptorSetAllocateInfo nodeDescriptorSetAllcInfo = vks::initializers::descriptorSetAllocateInfo(descriptorPool, &nodeDescriptorSetLayout, 1);
-					VK_CHECK_RESULT(vkAllocateDescriptorSets(device, &nodeDescriptorSetAllcInfo, &node->descriptorSet));
-					std::cout << std::format("create node uniform buffer {}", nodeUniformNum) << std::endl;
-
+					VkResult allcateResult = vkAllocateDescriptorSets(device, &nodeDescriptorSetAllcInfo, &node->descriptorSet);
+					VK_CHECK_RESULT(allcateResult);
 					VkWriteDescriptorSet writeNodeDesc = vks::initializers::writeDescriptorSet(node->descriptorSet, 
 						VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 0, &node->CBO.descriptor, 1);
-
 					vkUpdateDescriptorSets(device, 1, &writeNodeDesc, 0, NULL);
 				});
 
@@ -616,7 +672,7 @@ public:
 		VulkanglTFModel::Node* curParent = node->parent;
 		while (curParent)
 		{
-			mat = curParent->getNodeMatrix()* mat;
+			mat = curParent->getNodeMatrix() * mat;
 			curParent = curParent->parent;
 		}
 		memcpy(node->CBO.mapped, &(mat), sizeof(mat));
@@ -900,18 +956,18 @@ public:
 
 	void setupDescriptors()
 	{
+		const int32_t nodeNum = glTFModel.getNodeNum(); 
 		/* 
 			This sample uses separate descriptor sets (and layouts) for the matrices and materials (textures)
 		*/
-
 		std::vector<VkDescriptorPoolSize> poolSizes = {
 			// 1 scene info + object info per node
-			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 5 + 60/*glTFModel.nodes.size()*/), 
+			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 65 + glTFModel.materials.size()/*glTFModel.nodes.size()*/), 
 			// One combined image sampler per model image/texture how many textures per material ?
 			vks::initializers::descriptorPoolSize(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(glTFModel.materials.size() * 12)),
 		};
 		// One set for scene matrices and one per model for model info (model transform and animation data), one set per material for textures
-		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size() + glTFModel.nodes.size()) + 1;
+		const uint32_t maxSetCount = static_cast<uint32_t>(glTFModel.images.size() + nodeNum) + 1;
 		VkDescriptorPoolCreateInfo descriptorPoolInfo = vks::initializers::descriptorPoolCreateInfo(poolSizes, maxSetCount);
 		VK_CHECK_RESULT(vkCreateDescriptorPool(device, &descriptorPoolInfo, nullptr, &descriptorPool));
 
@@ -1028,6 +1084,7 @@ public:
 		VK_CHECK_RESULT(shaderData.buffer.map());
 
 		// TODO : Create model uniform buffer
+		glTFModel.prepareUniformBuffers(vulkanDevice);
 
 		//updateUniformBuffers();
 		shaderData.values.projection = camera.matrices.perspective;
