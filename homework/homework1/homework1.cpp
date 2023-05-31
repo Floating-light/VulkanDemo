@@ -103,7 +103,12 @@ public:
 		glm::mat4 anim_mat = glm::mat4(1.0f);
 		VkDescriptorSet descriptorSet;
 		vks::Buffer CBO;
-		glm::mat4 getNodeMatrix() const { return matrix * anim_mat; }
+
+		// TODO cache value 
+		glm::mat4 getNodeMatrix() 
+		{ 
+			return anim_mat * matrix ;
+		}
 		int nodeId = -1;
 		~Node() {
 			for (auto& child : children) {
@@ -429,7 +434,8 @@ public:
 		}
 	}
 	
-	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer, int nodeId)
+	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, 
+		std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer, int nodeId)
 	{
 		VulkanglTFModel::Node* node = new VulkanglTFModel::Node{};
 		node->matrix = glm::mat4(1.0f);
@@ -690,7 +696,7 @@ public:
 		VulkanglTFModel::Node* curParent = node->parent;
 		while (curParent)
 		{
-			mat = curParent->getNodeMatrix() * mat;
+			mat =  curParent->getNodeMatrix() * mat;
 			curParent = curParent->parent;
 		}
 		memcpy(node->CBO.mapped, &(mat), sizeof(mat));

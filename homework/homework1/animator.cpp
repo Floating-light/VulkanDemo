@@ -1,5 +1,8 @@
 #include "animator.h"
 #include <algorithm>
+#include <format>
+#include <iostream>
+
 #define GLM_ENABLE_EXPERIMENTAL 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -15,26 +18,29 @@ glm::mat4 Animator::updateAnimation(float deltaTime)
 	{
 		newTime -= maxTime;
 	}
-	auto itr = std::lower_bound(times.begin(), times.end(), newTime);
+	auto itr = std::upper_bound(times.begin(), times.end(), newTime);
+	auto itr_pre = itr - 1;
 	const size_t index = std::distance(times.begin(), itr) ; 
-	const size_t nextIndex = int(index + 1) % int(times.size());
-	const float lerp_ratio = (newTime - *itr) / (times[nextIndex] - *itr);
+	const size_t prevIndex = int(index - 1) ;
+	const float lerp_ratio = (newTime - times[prevIndex]) / (times[index] - times[prevIndex]);
 	{
-		glm::quat f = glm::make_quat(reinterpret_cast<const float*>(&rotation[index]));
-		glm::quat s = glm::make_quat(reinterpret_cast<const float*>(&rotation[nextIndex]));
-		glm::slerp(f, s, lerp_ratio);
-		retval *= glm::mat4(glm::slerp(f, s, lerp_ratio));
-	}
-	{
-		glm::vec3 f = scale[index];
-		retval = glm::scale(retval, glm::lerp(scale[index], scale[nextIndex], lerp_ratio));
-	}
-	{
-		const glm::vec3& f = translation[index];
-		const glm::vec3& s = translation[nextIndex];
+		const glm::vec3& f = translation[prevIndex];
+		const glm::vec3& s = translation[index];
 		//glm::vec3 v = f + (s - f) * lerp_ratio;
-		retval = glm::translate(retval, glm::lerp(f, s, lerp_ratio));
+		std::cout << std::format("lerp ratio  {} ", lerp_ratio) << std::endl;;
+		//retval = glm::translate(retval, glm::lerp(f, s, lerp_ratio));
+		//retval = glm::translate(retval, f);
+		retval = glm::translate(retval, glm::mix(f, s, lerp_ratio));
 	}
+	//{
+	//	glm::quat f = glm::make_quat(reinterpret_cast<const float*>(&rotation[prevIndex]));
+	//	glm::quat s = glm::make_quat(reinterpret_cast<const float*>(&rotation[index]));
+	//	retval *= glm::mat4(glm::slerp(f, s, lerp_ratio));
+	//}
+	//{
+	//	glm::vec3 f = scale[index];
+	//	retval = glm::scale(retval, glm::lerp(scale[index], scale[nextIndex], lerp_ratio));
+	//}
 	currentTime = newTime;
 	return retval;
 }

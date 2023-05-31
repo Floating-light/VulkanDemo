@@ -967,7 +967,8 @@ void VulkanExample::updateUniformBuffers()
 
 void VulkanExample::loadAssets()
 {
-	loadglTFFile(getAssetPath() + "models/CesiumMan/glTF/CesiumMan.gltf");
+	//loadglTFFile(getAssetPath() + "models/CesiumMan/glTF/CesiumMan.gltf");
+	loadglTFFile(getAssetPath() + "buster_drone/busterDrone.gltf");
 }
 
 void VulkanExample::prepare()

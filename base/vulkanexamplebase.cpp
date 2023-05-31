@@ -235,6 +235,16 @@ VkPipelineShaderStageCreateInfo VulkanExampleBase::loadShader(std::string fileNa
 	shaderStage.module = vks::tools::loadShader(androidApp->activity->assetManager, fileName.c_str(), device);
 #else
 	shaderStage.module = vks::tools::loadShader(fileName.c_str(), device);
+	if (shaderStage.module == VK_NULL_HANDLE)
+	{
+		const std::string oldshaderdir("hlsl");
+		const std::string newshaderdir("glsl");
+		if (size_t pos = fileName.find(oldshaderdir); pos != std::string::npos)
+		{
+			fileName.replace(pos, oldshaderdir.length(), newshaderdir);
+			shaderStage.module = vks::tools::loadShader(fileName.c_str(), device);
+		}
+	}
 #endif
 	shaderStage.pName = "main";
 	assert(shaderStage.module != VK_NULL_HANDLE);
