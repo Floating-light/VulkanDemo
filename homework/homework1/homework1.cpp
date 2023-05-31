@@ -29,6 +29,8 @@
 #include <variant>
 #include <memory>
 #include <queue>
+#define GLM_ENABLE_EXPERIMENTAL
+#include <glm/gtx/matrix_decompose.hpp>
 
 #include "vulkanexamplebase.h"
 
@@ -92,6 +94,12 @@ public:
 		std::vector<Node*> children;
 		Mesh mesh;
 		glm::mat4 matrix;
+
+		// Transform  
+		glm::vec3 translation; 
+		glm::quat rotation; 
+		glm::vec3 scale; 
+
 		glm::mat4 anim_mat = glm::mat4(1.0f);
 		VkDescriptorSet descriptorSet;
 		vks::Buffer CBO;
@@ -420,7 +428,7 @@ public:
 			}
 		}
 	}
-
+	
 	void loadNode(const tinygltf::Node& inputNode, const tinygltf::Model& input, VulkanglTFModel::Node* parent, std::vector<uint32_t>& indexBuffer, std::vector<VulkanglTFModel::Vertex>& vertexBuffer, int nodeId)
 	{
 		VulkanglTFModel::Node* node = new VulkanglTFModel::Node{};
@@ -431,17 +439,27 @@ public:
 		// Get the local node matrix
 		// It's either made up from translation, rotation, scale or a 4x4 matrix
 		if (inputNode.translation.size() == 3) {
-			node->matrix = glm::translate(node->matrix, glm::vec3(glm::make_vec3(inputNode.translation.data())));
+			node->translation = glm::make_vec3(inputNode.translation.data());
+			node->matrix = glm::translate(node->matrix, node->translation);
 		}
 		if (inputNode.rotation.size() == 4) {
-			glm::quat q = glm::make_quat(inputNode.rotation.data());
-			node->matrix *= glm::mat4(q);
+			node->rotation = glm::make_quat(inputNode.rotation.data());
+			node->matrix *= glm::mat4(node->rotation);
 		}
 		if (inputNode.scale.size() == 3) {
-			node->matrix = glm::scale(node->matrix, glm::vec3(glm::make_vec3(inputNode.scale.data())));
+			node->scale = glm::vec3(glm::make_vec3(inputNode.scale.data()));
+			node->matrix = glm::scale(node->matrix, node->scale);
 		}
 		if (inputNode.matrix.size() == 16) {
 			node->matrix = glm::make_mat4x4(inputNode.matrix.data());
+
+			// https://stackoverflow.com/questions/17918033/glm-decompose-mat4-into-translation-and-rotation
+			glm::quat inverse_quat;
+			glm::vec3 skew;
+			glm::vec4 perspective;
+			glm::decompose(node->matrix, node->scale, inverse_quat,
+				node->translation,skew, perspective);
+			node->rotation = glm::conjugate(inverse_quat);
 		};
 		
 		// Load node's children
