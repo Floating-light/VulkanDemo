@@ -31,7 +31,7 @@
 #include <queue>
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/matrix_decompose.hpp>
-
+#include <glm/gtx/string_cast.hpp>
 #include "vulkanexamplebase.h"
 
 #include "animator.h"
@@ -93,21 +93,23 @@ public:
 		Node* parent;
 		std::vector<Node*> children;
 		Mesh mesh;
-		glm::mat4 matrix;
+		glm::mat4 matrix = glm::mat4(1.0f);
 
 		// Transform  
-		glm::vec3 translation; 
-		glm::quat rotation; 
-		glm::vec3 scale; 
+		glm::vec3 translation = {};
+		glm::quat rotation = {};
+		glm::vec3 scale = glm::vec3(1.0f); 
 
-		glm::mat4 anim_mat = glm::mat4(1.0f);
+		//glm::mat4 anim_mat = glm::mat4(1.0f);
 		VkDescriptorSet descriptorSet;
 		vks::Buffer CBO;
 
 		// TODO cache value 
 		glm::mat4 getNodeMatrix() 
 		{ 
-			return anim_mat * matrix ;
+			return glm::translate(glm::mat4(1.0f), translation) * 
+				glm::mat4(rotation) * 
+				glm::scale(glm::mat4(1.0f), scale) * matrix;
 		}
 		int nodeId = -1;
 		~Node() {
@@ -446,27 +448,40 @@ public:
 		// It's either made up from translation, rotation, scale or a 4x4 matrix
 		if (inputNode.translation.size() == 3) {
 			node->translation = glm::make_vec3(inputNode.translation.data());
-			node->matrix = glm::translate(node->matrix, node->translation);
 		}
 		if (inputNode.rotation.size() == 4) {
 			node->rotation = glm::make_quat(inputNode.rotation.data());
-			node->matrix *= glm::mat4(node->rotation);
 		}
 		if (inputNode.scale.size() == 3) {
-			node->scale = glm::vec3(glm::make_vec3(inputNode.scale.data()));
-			node->matrix = glm::scale(node->matrix, node->scale);
+			node->scale = glm::make_vec3(inputNode.scale.data());
 		}
 		if (inputNode.matrix.size() == 16) {
+			std::cout << std::format("node {} use matrix ", node->nodeId) << std::endl;
 			node->matrix = glm::make_mat4x4(inputNode.matrix.data());
-
-			// https://stackoverflow.com/questions/17918033/glm-decompose-mat4-into-translation-and-rotation
-			glm::quat inverse_quat;
-			glm::vec3 skew;
-			glm::vec4 perspective;
-			glm::decompose(node->matrix, node->scale, inverse_quat,
-				node->translation,skew, perspective);
-			node->rotation = glm::conjugate(inverse_quat);
 		};
+		//if (inputNode.translation.size() == 3) {
+		//	glm::vec3 t = glm::make_vec3(inputNode.translation.data()); 
+		//	node->matrix = glm::translate(node->matrix, t);
+		//}
+		//if (inputNode.rotation.size() == 4) {
+		//	glm::quat q = glm::make_quat(inputNode.rotation.data()); 
+		//	node->matrix *= glm::mat4(q);
+		//}
+		//if (inputNode.scale.size() == 3) {
+		//	glm::vec3 s = glm::vec3(glm::make_vec3(inputNode.scale.data())); 
+		//	node->matrix = glm::scale(node->matrix, s);
+		//}
+		//if (inputNode.matrix.size() == 16) {
+		//	node->matrix = glm::make_mat4x4(inputNode.matrix.data());
+
+		//	// https://stackoverflow.com/questions/17918033/glm-decompose-mat4-into-translation-and-rotation
+		//	//glm::quat inverse_quat;
+		//	//glm::vec3 skew;
+		//	//glm::vec4 perspective;
+		//	//glm::decompose(node->matrix, node->scale, inverse_quat,
+		//	//	node->translation,skew, perspective);
+		//	//node->rotation = glm::conjugate(inverse_quat);
+		//};
 		
 		// Load node's children
 		if (inputNode.children.size() > 0) {
@@ -683,28 +698,50 @@ public:
 
 		}
 	}
+	void updateNodeTransform(Node* node, const glm::mat4& parentMat)
+	{
+		if (!node) return;
+		if (node->nodeId == 10)
+		{
+			std::cout << "sadf" << std::endl;
+		}
+		const glm::mat4 curMat = parentMat * node->getNodeMatrix();
+		//std::cout << std::format("process node i {}", node->nodeId) << std::endl;
+		//Node* parentNode = node->parent;
+		//while (parentNode)
+		//{
+		//	mat = parentNode->getNodeMatrix() * mat;
+		//	parentNode = parentNode->parent;
+		//}
+		memcpy(node->CBO.mapped, &(curMat), sizeof(curMat));
+		std::cout << std::format("{}. {}", node->nodeId, glm::to_string(curMat)) << std::endl;
 
+		for (auto&& child : node->children)
+		{
+			updateNodeTransform(child, curMat);
+		}
+
+	}
 	void updateAnimation(VulkanglTFModel::Node* node, float deltaSeconds)
 	{
-		if (auto itr = animations.find(node->nodeId); itr != animations.end())
-		{
-			std::shared_ptr<Animator> ani = itr->second;
-			node->anim_mat = ani->updateAnimation(deltaSeconds);
-		}
-		glm::mat4 mat = node->getNodeMatrix();
+		breadthFirstSearch(node, [&](VulkanglTFModel::Node* n) 
+			{
+				if (auto itr = animations.find(n->nodeId); itr != animations.end())
+				{
+					std::shared_ptr<Animator> ani = itr->second;
+					//node->anim_mat = ani->updateAnimation(deltaSeconds);
+					auto trans = ani->updateAnimationRetTransform(deltaSeconds);
+					n->translation = std::get<0>(trans);
+					n->rotation = std::get<1>(trans);
+					n->scale = std::get<2>(trans);
+				}
+				else
+				{
+					std::cout << std::format("no animation for node {}", n->nodeId) << std::endl;
+				}
+			});
 
-		VulkanglTFModel::Node* curParent = node->parent;
-		while (curParent)
-		{
-			mat =  curParent->getNodeMatrix() * mat;
-			curParent = curParent->parent;
-		}
-		memcpy(node->CBO.mapped, &(mat), sizeof(mat));
-
-		for (size_t i = 0; i < node->children.size(); ++i)
-		{
-			updateAnimation(node->children[i], deltaSeconds);
-		}
+		updateNodeTransform(node, glm::mat4(1.0f));
 	}
 
 	/*
