@@ -35,6 +35,7 @@
 #include "vulkanexamplebase.h"
 
 #include "animator.h"
+#include "transform.h"
 #define ENABLE_VALIDATION true
 
 // Contains everything required to render a glTF model in Vulkan
@@ -99,6 +100,7 @@ public:
 		glm::vec3 translation = {};
 		glm::quat rotation = {};
 		glm::vec3 scale = glm::vec3(1.0f); 
+		Transform transform;
 
 		//glm::mat4 anim_mat = glm::mat4(1.0f);
 		VkDescriptorSet descriptorSet;
@@ -107,9 +109,7 @@ public:
 		// TODO cache value 
 		glm::mat4 getNodeMatrix() 
 		{ 
-			return glm::translate(glm::mat4(1.0f), translation) * 
-				glm::mat4(rotation) * 
-				glm::scale(glm::mat4(1.0f), scale) * matrix;
+			return transform.toMaterix4() * matrix; 
 		}
 		int nodeId = -1;
 		~Node() {
@@ -447,13 +447,13 @@ public:
 		// Get the local node matrix
 		// It's either made up from translation, rotation, scale or a 4x4 matrix
 		if (inputNode.translation.size() == 3) {
-			node->translation = glm::make_vec3(inputNode.translation.data());
+			node->transform.setTranslation(glm::make_vec3(inputNode.translation.data()));
 		}
 		if (inputNode.rotation.size() == 4) {
-			node->rotation = glm::make_quat(inputNode.rotation.data());
+			node->transform.setRotation(glm::make_quat(inputNode.rotation.data()));
 		}
 		if (inputNode.scale.size() == 3) {
-			node->scale = glm::make_vec3(inputNode.scale.data());
+			node->transform.setScale(glm::make_vec3(inputNode.scale.data()));
 		}
 		if (inputNode.matrix.size() == 16) {
 			std::cout << std::format("node {} use matrix ", node->nodeId) << std::endl;
@@ -701,26 +701,15 @@ public:
 	void updateNodeTransform(Node* node, const glm::mat4& parentMat)
 	{
 		if (!node) return;
-		if (node->nodeId == 10)
-		{
-			std::cout << "sadf" << std::endl;
-		}
+
 		const glm::mat4 curMat = parentMat * node->getNodeMatrix();
-		//std::cout << std::format("process node i {}", node->nodeId) << std::endl;
-		//Node* parentNode = node->parent;
-		//while (parentNode)
-		//{
-		//	mat = parentNode->getNodeMatrix() * mat;
-		//	parentNode = parentNode->parent;
-		//}
+
 		memcpy(node->CBO.mapped, &(curMat), sizeof(curMat));
-		std::cout << std::format("{}. {}", node->nodeId, glm::to_string(curMat)) << std::endl;
 
 		for (auto&& child : node->children)
 		{
 			updateNodeTransform(child, curMat);
 		}
-
 	}
 	void updateAnimation(VulkanglTFModel::Node* node, float deltaSeconds)
 	{
@@ -729,11 +718,7 @@ public:
 				if (auto itr = animations.find(n->nodeId); itr != animations.end())
 				{
 					std::shared_ptr<Animator> ani = itr->second;
-					//node->anim_mat = ani->updateAnimation(deltaSeconds);
-					auto trans = ani->updateAnimationRetTransform(deltaSeconds);
-					n->translation = std::get<0>(trans);
-					n->rotation = std::get<1>(trans);
-					n->scale = std::get<2>(trans);
+					n->transform = ani->updateAnimationRetTransform(deltaSeconds);
 				}
 				else
 				{
@@ -1161,9 +1146,10 @@ public:
 		shaderData.values.viewPos = camera.viewPos;
 		memcpy(shaderData.buffer.mapped, &shaderData.values, sizeof(shaderData.values));
 
+		
 		// 
 		for (auto& node : glTFModel.nodes) {
-			glTFModel.updateAnimation(node, 0.01);
+			glTFModel.updateAnimation(node, frameTimer);
 		}
 	}
 

@@ -45,8 +45,9 @@ glm::mat4 Animator::updateAnimation(float deltaTime)
 	return retval;
 }
 
-std::tuple<glm::vec3, glm::quat, glm::vec3> Animator::updateAnimationRetTransform(float deltaTime)
+Transform Animator::updateAnimationRetTransform(float deltaTime)
 {
+	Transform result;
 	std::tuple<glm::vec3, glm::quat, glm::vec3> retVal = {};
 	float newTime = currentTime + deltaTime;
 	if (float maxTime = times[times.size() - 1]; newTime > maxTime)
@@ -54,28 +55,22 @@ std::tuple<glm::vec3, glm::quat, glm::vec3> Animator::updateAnimationRetTransfor
 		newTime -= maxTime;
 	}
 	auto itr = std::upper_bound(times.begin(), times.end(), newTime);
-	auto itr_pre = itr - 1;
 	const size_t index = std::distance(times.begin(), itr);
 	const size_t prevIndex = int(index - 1);
 	const float lerp_ratio = (newTime - times[prevIndex]) / (times[index] - times[prevIndex]);
 	{
-		const glm::vec3& f = translation[prevIndex];
-		const glm::vec3& s = translation[index];
-		std::get<0>(retVal) = glm::lerp(f, s, lerp_ratio);
-
+		result.setTranslation(glm::lerp(translation[prevIndex], translation[index], lerp_ratio));
 	}
 	{
 		glm::quat f = glm::make_quat(reinterpret_cast<const float*>(&rotation[prevIndex]));
 		glm::quat s = glm::make_quat(reinterpret_cast<const float*>(&rotation[index]));
-		std::get<1>(retVal) = glm::normalize(glm::slerp(f, s, lerp_ratio));
+		result.setRotation(glm::normalize(glm::slerp(f, s, lerp_ratio)));
 	}
 	{
-		glm::vec3 f = scale[index];
-		std::get<2>(retVal) = glm::lerp(scale[prevIndex], scale[index], lerp_ratio);
-
+		result.setScale(glm::lerp(scale[prevIndex], scale[index], lerp_ratio));
 	}
 	currentTime = newTime;
-	return retVal;
+	return result;
 }
 
 void Animator::setTimes(int inTimelineIndex, const std::vector<float>& inTimes)
