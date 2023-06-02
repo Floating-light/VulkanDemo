@@ -459,29 +459,6 @@ public:
 			std::cout << std::format("node {} use matrix ", node->nodeId) << std::endl;
 			node->matrix = glm::make_mat4x4(inputNode.matrix.data());
 		};
-		//if (inputNode.translation.size() == 3) {
-		//	glm::vec3 t = glm::make_vec3(inputNode.translation.data()); 
-		//	node->matrix = glm::translate(node->matrix, t);
-		//}
-		//if (inputNode.rotation.size() == 4) {
-		//	glm::quat q = glm::make_quat(inputNode.rotation.data()); 
-		//	node->matrix *= glm::mat4(q);
-		//}
-		//if (inputNode.scale.size() == 3) {
-		//	glm::vec3 s = glm::vec3(glm::make_vec3(inputNode.scale.data())); 
-		//	node->matrix = glm::scale(node->matrix, s);
-		//}
-		//if (inputNode.matrix.size() == 16) {
-		//	node->matrix = glm::make_mat4x4(inputNode.matrix.data());
-
-		//	// https://stackoverflow.com/questions/17918033/glm-decompose-mat4-into-translation-and-rotation
-		//	//glm::quat inverse_quat;
-		//	//glm::vec3 skew;
-		//	//glm::vec4 perspective;
-		//	//glm::decompose(node->matrix, node->scale, inverse_quat,
-		//	//	node->translation,skew, perspective);
-		//	//node->rotation = glm::conjugate(inverse_quat);
-		//};
 		
 		// Load node's children
 		if (inputNode.children.size() > 0) {
@@ -1023,8 +1000,12 @@ public:
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &descriptorSetLayoutCI, nullptr, &descriptorSetLayouts.matrices));
 		
 		// Descriptor set layout for node info
-		VkDescriptorSetLayoutBinding nodeInfoSetLayoutBinding = vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0, 1);
-		VkDescriptorSetLayoutCreateInfo nodeDescriptorSetLayoutCI = vks::initializers::descriptorSetLayoutCreateInfo(&nodeInfoSetLayoutBinding, 1);
+		std::array<VkDescriptorSetLayoutBinding, 2> nodeInfoSetLayoutBindings = {
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 0, 1),
+			vks::initializers::descriptorSetLayoutBinding(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_SHADER_STAGE_VERTEX_BIT, 1, 1)
+		};
+		VkDescriptorSetLayoutCreateInfo nodeDescriptorSetLayoutCI = 
+			vks::initializers::descriptorSetLayoutCreateInfo(nodeInfoSetLayoutBindings.data(), nodeInfoSetLayoutBindings.size());
 		VK_CHECK_RESULT(vkCreateDescriptorSetLayout(device, &nodeDescriptorSetLayoutCI, nullptr, &descriptorSetLayouts.nodeParams));
 		
 		// Descriptor set layout for passing material textures, 绑定到第0 个位置，Texture和Sampler, 用于PixelShader

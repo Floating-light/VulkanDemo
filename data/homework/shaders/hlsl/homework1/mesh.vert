@@ -28,6 +28,7 @@ cbuffer modelInfo : register(b0, space2)
 {
     ModelInfo modelInfo;
 }
+StructuredBuffer<float4x4> animMat : register(t0, space2);
 
 struct PushConsts {
 	float4x4 model;
