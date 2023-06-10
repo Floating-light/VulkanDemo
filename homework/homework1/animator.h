@@ -10,7 +10,6 @@
 class Animator
 {
 public:
-	glm::mat4 updateAnimation(float deltaTime) ;
 	Transform updateAnimationRetTransform(float deltaTime);
 	void setTimes(int inTimelineIndex, const std::vector<float>& inTimes);
 	void setTranslation(const std::vector<glm::vec3>& inTrans);
